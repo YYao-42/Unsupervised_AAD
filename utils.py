@@ -451,7 +451,7 @@ def sig_level_binomial_test(p_value, total_trials, p=0.5):
     return sig_level
 
 
-def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range=3, nb_comp_into_account=1):
+def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range=5, nb_comp_into_account=2):
     nb_test = corr_att.shape[0]
     corr_att = np.array([np.sort(row[:range])[::-1] for row in corr_att])
     corr_unatt = np.array([np.sort(row[:range])[::-1] for row in corr_unatt])
