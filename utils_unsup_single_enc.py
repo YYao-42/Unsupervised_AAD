@@ -58,6 +58,36 @@ def prepare_train_val_test_data(Subj_ID, MOD, modal_dict, modal_dict_SO, feat_at
     return views_train, views_val, views_test
 
 
+def prepare_train_val_test_data_svad(Subj_ID, MOD, modal_dict, feat_att_list, feat_unatt_list, L_data, offset_data, L_feats, offset_feats, fs, TRUELABEL_PERCENT, resolu, RANDSEED, leave_out=2, KEEP_TRAIN_PERCENT=None, LWCOV=False):
+    # Load data for the specific subject
+    data_onesubj_list = [data[:,:,Subj_ID] for data in modal_dict[MOD]]
+    # Split the SI data into training and validation sets
+    train_list_folds, test_list_folds, val_list_folds = utils.split_multi_mod_withval_LVO([data_onesubj_list, feat_att_list, feat_unatt_list], leave_out=leave_out, VAL=not LWCOV)
+    nb_videos = len(feat_att_list)
+    views_train_folds = []
+    views_val_folds = []
+    views_test_folds = []
+    for fold in range(nb_videos//leave_out):
+        data_train, feats_att_train, feats_unatt_train = change_feats_label(train_list_folds[fold], fs, TRUELABEL_PERCENT, resolu, RANDSEED)
+        if KEEP_TRAIN_PERCENT is not None:
+            T_train = data_train.shape[0]
+            data_train = data_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
+            feats_att_train = feats_att_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
+            feats_unatt_train = feats_unatt_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
+        data_test, feats_att_test, feats_unatt_test = test_list_folds[fold]
+        views_train = [process_data_per_view(data_train, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_att_train, L_feats, offset_feats, NORMALIZE=True), process_data_per_view(feats_unatt_train, L_feats, offset_feats, NORMALIZE=True)]
+        views_test = [process_data_per_view(data_test, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_att_test, L_feats, offset_feats, NORMALIZE=True), process_data_per_view(feats_unatt_test, L_feats, offset_feats, NORMALIZE=True)]
+        views_train_folds.append(views_train)
+        views_test_folds.append(views_test)
+        if not LWCOV:
+            data_val, feats_att_val, feats_unatt_val = val_list_folds[fold] 
+            views_val = [process_data_per_view(data_val, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_att_val, L_feats, offset_feats, NORMALIZE=True), process_data_per_view(feats_unatt_val, L_feats, offset_feats, NORMALIZE=True)]
+            views_val_folds.append(views_val)
+        else:
+            views_val_folds.append(None)
+    return views_train_folds, views_val_folds, views_test_folds
+
+
 def cal_corr_sum(corr, range_into_account=5, nb_comp_into_account=2):
     corr_ranked = np.sort(corr[:range_into_account])[::-1]
     corr_sum = np.sum(corr_ranked[:nb_comp_into_account])
@@ -76,7 +106,7 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
         for c in param_grid['c']:
             model = MCCA(latent_dimensions=latent_dimensions, pca=False, eps=0, c=c) 
             model.fit([data_train, feats_att_train])
-            corr = model.average_pairwise_correlations(views_val)
+            corr = model.average_pairwise_correlations(views_val[:2])
             corr_sum = cal_corr_sum(corr)
             print(f'c: {c}, corr: {corr}')
             if corr_sum > best_corr_sum:
@@ -142,25 +172,50 @@ def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
         feats_seg = utils.into_trials_with_overlap(feats, fs, trial_len, overlap=overlap)
         mismatch_seg = utils.into_trials_with_overlap(feats, fs, trial_len, overlap=overlap, PERMUTE=True)
     else:
-        nb_trials = int(T/fs/trial_len/(1-overlap))
+        nb_trials = int(T/fs*3)
         start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
         data_seg = utils.into_trials(data, fs, trial_len, start_points=start_points)
         feats_seg = utils.into_trials(feats, fs, trial_len, start_points=start_points)
         mismatch_seg = [utils.select_distractors(feats, fs, trial_len, start_point) for start_point in start_points]
+    nb_trials = len(data_seg)
     corr_match = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, feats_seg)]
     corr_mismatch = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, mismatch_seg)]
     acc = utils.eval_compete(np.stack(corr_match, axis=0), np.stack(corr_mismatch, axis=0), TRAIN_WITH_ATT=True)
-    return acc
+    nb_correct = round(acc * nb_trials)
+    return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, mm_resolu, L_data, L_feats, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, BOOTSTRAP=False):
+def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
+    data, att, unatt = views
+    T = data.shape[0]
+    if not BOOTSTRAP:
+        data_seg = utils.into_trials_with_overlap(data, fs, trial_len, overlap=overlap)
+        att_seg = utils.into_trials_with_overlap(att, fs, trial_len, overlap=overlap)
+        unatt_seg = utils.into_trials_with_overlap(unatt, fs, trial_len, overlap=overlap)
+    else:
+        nb_trials = int(T/fs*3)
+        start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
+        data_seg = utils.into_trials(data, fs, trial_len, start_points=start_points)
+        att_seg  = utils.into_trials(att, fs, trial_len, start_points=start_points)
+        unatt_seg = utils.into_trials(unatt, fs, trial_len, start_points=start_points)
+    nb_trials = len(data_seg)
+    corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_seg)]
+    corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_seg)]
+    acc = utils.eval_compete(np.stack(corr_a, axis=0), np.stack(corr_u, axis=0), TRAIN_WITH_ATT=True)
+    nb_correct = round(acc * nb_trials)
+    return nb_correct, nb_trials
+
+
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, BOOTSTRAP=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     corr_pair_list = []
     mask_list = []
     rt_list = []
-    corr_sum_list = []
-    acc_list = []
+    corr_sum_att_list = []
+    corr_sum_unatt_list = []
+    nb_correct_list = []
+    nb_trials_list = []
     for i in range(MAX_ITER):
         model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions)
         model_list.append(model)
@@ -171,11 +226,21 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, mm_resolu,
         corr_pair_list.append(corr_sum_pairs)
         mask_list.append(mask)
         rt_list.append(rt)
-        corr_test = model.average_pairwise_correlations(views_test)
-        corr_sum = cal_corr_sum(corr_test)
-        corr_sum_list.append(corr_sum)
-        print(f'Corr_sum_test: {corr_sum}')
-        acc = match_mismatch(views_test, model, fs, mm_resolu, BOOTSTRAP=BOOTSTRAP)
-        acc_list.append(acc)
+        if SVAD:
+            corr_att_test = model.average_pairwise_correlations(views_test[:2])
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test))
+            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test)}')
+            corr_unatt_test = model.average_pairwise_correlations([views_test[0], views_test[2]])
+            corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test))
+            print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test)}')
+            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP)
+        else:
+            corr_att_test = model.average_pairwise_correlations(views_test)
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test))
+            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test)}')
+            corr_sum_unatt_list.append(None)
+            nb_correct, nb_trials = match_mismatch(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP)
+        nb_correct_list.append(nb_correct)
+        nb_trials_list.append(nb_trials)
         views_train = update_training_views(mask, views_in_segs)
-    return model_list, corr_pair_list, mask_list, rt_list, corr_sum_list, acc_list
+    return model_list, corr_pair_list, mask_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list
