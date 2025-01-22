@@ -108,7 +108,7 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
             model.fit([data_train, feats_att_train])
             corr = model.average_pairwise_correlations(views_val[:2])
             corr_sum = cal_corr_sum(corr)
-            print(f'c: {c}, corr: {corr}')
+            print(f'c: {c}, corr_val: {corr}')
             if corr_sum > best_corr_sum:
                 best_corr_sum = corr_sum
                 best_c = c
@@ -116,6 +116,7 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
                 best_corr_val = corr
         print(f'Best c: {best_c}')
     best_corr_train = best_model.average_pairwise_correlations([data_train, feats_att_train])
+    print(f'Corr_train: {best_corr_train}')
     return best_model, best_corr_val, best_corr_train
 
 
@@ -143,7 +144,7 @@ def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, coe=1):
     nb_detected_seg = np.sum(corr_diff < 0)
     # sort the influence difference from the smallest to the largest
     idx_sort = np.argsort(corr_diff)
-    coe = 0.5**(ITER+1) if coe is None else coe
+    coe = 0.5**(ITER) if coe is None else coe
     idx_keep = idx_sort[int(coe*nb_detected_seg):]
     mask[idx_keep] = True
     rt = 1 - nb_detected_seg / len(corr_diff)

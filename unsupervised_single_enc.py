@@ -79,14 +79,16 @@ for SEED in args.seeds:
                 corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
                 nb_correct_folds.append(np.array(nb_correct_list))
                 nb_trials_folds.append(np.array(nb_trials_list))
-            corr_sum_att_avg = np.mean(corr_sum_att_folds, axis=0)
-            corr_sum_unatt_avg = np.mean(corr_sum_unatt_folds, axis=0)
-            acc_avg = np.mean(nb_correct_folds, axis=0)/np.mean(nb_trials_folds, axis=0)
-            print(f'################Correlation (Att): {corr_sum_att_avg}################')
-            print(f'################Correlation (Unatt): {corr_sum_unatt_avg}################')
-            print(f'################Accuracy: {acc_avg}################')
+            corr_sum_att = np.stack(corr_sum_att_folds, axis=0)
+            corr_sum_unatt = np.stack(corr_sum_unatt_folds, axis=0)
+            nb_correct = np.stack(nb_correct_folds, axis=0)
+            nb_trials = np.stack(nb_trials_folds, axis=0)
+            acc = nb_correct/nb_trials
+            print(f'################Correlation (Att): {np.mean(corr_sum_att, axis=0)}################')
+            print(f'################Correlation (Unatt): {np.mean(corr_sum_unatt, axis=0)}################')
+            print(f'################Accuracy: {np.mean(acc, axis=0)}################')
             with open(file_name, 'wb') as f:
-                res = {'corr_sum_att': corr_sum_att_avg, 'corr_sum_unatt': corr_sum_unatt_avg, 'acc_avg': acc_avg}
+                res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc': acc}
                 pickle.dump(res, f)
 
     if TRUELABEL_PERCENT==0.0 or TRUELABEL_PERCENT==1.0:
