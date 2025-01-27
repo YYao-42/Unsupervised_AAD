@@ -19,6 +19,7 @@ argparser.add_argument('--svad', action='store_true', default=False, help='Do sv
 argparser.add_argument('--lwcov', action='store_true', default=False, help='Whether to use ledoit-wolf covariance estimator')
 argparser.add_argument('--bootstrap', action='store_true', default=False, help='Whether to use bootstrap for mm task')
 argparser.add_argument('--mixpair', action='store_true', default=False, help='Whether to mix the pairs in the test set for the svad task')
+argparser.add_argument('--twoenc', action='store_true', default=False, help='Whether to use two encoders for the svad task')
 args = argparser.parse_args()
 
 MOD = args.mod
@@ -33,6 +34,7 @@ SVAD = args.svad
 LWCOV = args.lwcov
 BOOTSTRAP = args.bootstrap
 MIXPAIR = args.mixpair
+TWOENC = args.twoenc
 coe = args.flippct
 
 fs = 30
@@ -62,11 +64,11 @@ feat_SO_list = [feats[:,8] for feats in feat_all_SO_list]
 for SEED in args.seeds:
     print(f'#########Seed: {SEED}#########')
     for Subj_ID in range(nb_subj):
-        file_name = f'{table_path}{Subj_ID}_{'crossview' if CROSSVIEW else 'featview'}_trackresolu{track_resolu}_truelabelpct_{TRUELABEL_PERCENT}_labelresolu_{label_resolu}_{'svadresolu' if SVAD else 'mmresolu'}_{compete_resolu}coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_samew' if SAMEWEIGHT else ''}{KEEP_TRAIN_PERCENT if KEEP_TRAIN_PERCENT is not None else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_mixpair' if MIXPAIR else ''}.pkl'
+        file_name = f'{table_path}{Subj_ID}_{'crossview' if CROSSVIEW else 'featview'}_trackresolu{track_resolu}_truelabelpct_{TRUELABEL_PERCENT}_labelresolu_{label_resolu}_{'svadresolu' if SVAD else 'mmresolu'}_{compete_resolu}coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_samew' if SAMEWEIGHT else ''}{KEEP_TRAIN_PERCENT if KEEP_TRAIN_PERCENT is not None else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_mixpair' if MIXPAIR else ''}{'_twoenc' if TWOENC else ''}.pkl'
         print(f'#########Subject: {Subj_ID}#########')
         if not SVAD:
             views_train, views_val, views_test = utils_unsup.prepare_train_val_test_data(Subj_ID, MOD, modal_dict, modal_dict_SO, feat_att_unatt_list, feat_SO_list, L_data, offset_data, L_feats, offset_feats, fs, TRUELABEL_PERCENT, label_resolu, RANDSEED=SEED, KEEP_TRAIN_PERCENT=KEEP_TRAIN_PERCENT)
-            model_list, influence_list, mask_list, rt_list, corr_sum_list, _, nb_correct_list, nb_trials_list = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=SVAD, MAX_ITER=MAX_ITER, LWCOV=LWCOV, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT, latent_dimensions=latent_dimensions, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR)
+            model_list, influence_list, mask_list, rt_list, corr_sum_list, _, nb_correct_list, nb_trials_list = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=SVAD, MAX_ITER=MAX_ITER, LWCOV=LWCOV, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT, latent_dimensions=latent_dimensions, BOOTSTRAP=BOOTSTRAP)
             acc_list = [nb_correct/nb_trials for nb_correct, nb_trials in zip(nb_correct_list, nb_trials_list)]
             with open(file_name, 'wb') as f:
                 # create a dictionary to save the data
@@ -79,7 +81,7 @@ for SEED in args.seeds:
             nb_correct_folds = []
             nb_trials_folds = []
             for views_train, views_val, views_test in zip(views_train_folds, views_val_folds, views_test_folds):
-                _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=SVAD, MAX_ITER=MAX_ITER, LWCOV=LWCOV, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT, latent_dimensions=latent_dimensions, BOOTSTRAP=BOOTSTRAP)
+                _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=SVAD, MAX_ITER=MAX_ITER, LWCOV=LWCOV, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT, latent_dimensions=latent_dimensions, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC)
                 corr_sum_att_folds.append(np.array(corr_sum_att_list))
                 corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
                 nb_correct_folds.append(np.array(nb_correct_list))

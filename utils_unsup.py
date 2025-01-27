@@ -83,7 +83,7 @@ def prepare_train_val_test_data_svad(Subj_ID, MOD, modal_dict, feat_att_unatt_li
     return views_train_folds, views_val_folds, views_test_folds
 
 
-def cal_corr_sum(corr, range_into_account=5, nb_comp_into_account=2):
+def cal_corr_sum(corr, range_into_account=3, nb_comp_into_account=2):
     corr_ranked = np.sort(corr[:range_into_account])[::-1]
     corr_sum = np.sum(corr_ranked[:nb_comp_into_account])
     return corr_sum
@@ -182,10 +182,12 @@ def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
     return nb_correct, nb_trials
 
 
-def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=False):
+def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=False, TWOENC=False):
     data, att_unatt = views
     T = data.shape[0]
     L_feats = att_unatt.shape[1]//2
+    if TWOENC:
+        assert model.weights_[1].shape[0] == att_unatt.shape[1], 'The model is not in two-encoder mode'
     att = att_unatt[:, :L_feats]
     unatt = att_unatt[:, L_feats:]
     if not BOOTSTRAP:
@@ -212,15 +214,21 @@ def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=Fals
             unatt_seg_v1 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v1)
             unatt_seg_v2 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v2)
             unatt_seg = [np.concatenate([u1, u2], axis=0) for u1, u2 in zip(unatt_seg_v1, unatt_seg_v2)]
-    nb_trials = len(data_seg)
-    corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_seg)]
-    corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_seg)]
+    if TWOENC:
+        att_unatt_seg = [np.concatenate([a, u], axis=1) for a, u in zip(att_seg, unatt_seg)]
+        unatt_att_seg = [np.concatenate([u, a], axis=1) for a, u in zip(att_seg, unatt_seg)]
+        corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_unatt_seg)]
+        corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_att_seg)]
+    else:
+        corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_seg)]
+        corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_seg)]
     acc = utils.eval_compete(np.stack(corr_a, axis=0), np.stack(corr_u, axis=0), TRAIN_WITH_ATT=True, nb_comp_into_account=2)
+    nb_trials = len(data_seg)
     nb_correct = round(acc * nb_trials)
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, BOOTSTRAP=False, MIXPAIR=False):
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, BOOTSTRAP=False, MIXPAIR=False, TWOENC=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     influence_list = []
@@ -241,6 +249,7 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         influence_list.append(influence_views[1][:,idx,:])
         mask_list.append(mask)
         rt_list.append(rt)
+        model_two_enc = copy.deepcopy(model)
         model.weights_[1] = model.weights_[1][:L_feats, :]
         if SVAD:
             data_test, att_unatt_test = views_test
@@ -252,7 +261,10 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
             corr_unatt_test = model.average_pairwise_correlations([data_test, unatt_test])
             corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test))
             print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test)}')
-            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR)
+            if TWOENC:
+                nb_correct, nb_trials = svad(views_test, model_two_enc, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC)
+            else:
+                nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC)
         else:
             corr_att_test = model.average_pairwise_correlations(views_test)
             corr_sum_att_list.append(cal_corr_sum(corr_att_test))
