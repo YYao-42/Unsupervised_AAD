@@ -90,12 +90,12 @@ def cal_corr_sum(corr, range_into_account=5, nb_comp_into_account=2):
 
 
 def train_cca_model(views_train, views_val, L_feats, LWCOV=False, latent_dimensions=5):
-    d_feats_val = views_val[1].shape[1]
     if LWCOV:
         best_model = MCCA_LW(latent_dimensions=latent_dimensions)
         best_model.fit(views_train)
         best_corr_val = None
     else:
+        d_feats_val = views_val[1].shape[1]
         param_grid = {'c': [(a, b) for a, b in product([1e-8, 1e-7, 1e-6, 1e-5], repeat=2) if a > b]}
         best_corr_sum = -np.inf
         for c in param_grid['c']:
@@ -182,7 +182,7 @@ def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
     return nb_correct, nb_trials
 
 
-def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
+def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=False):
     data, att_unatt = views
     T = data.shape[0]
     L_feats = att_unatt.shape[1]//2
@@ -194,10 +194,24 @@ def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
         unatt_seg = utils.into_trials_with_overlap(unatt, fs, trial_len, overlap=overlap)
     else:
         nb_trials = int(T/fs*3)
-        start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
-        data_seg = utils.into_trials(data, fs, trial_len, start_points=start_points)
-        att_seg  = utils.into_trials(att, fs, trial_len, start_points=start_points)
-        unatt_seg = utils.into_trials(unatt, fs, trial_len, start_points=start_points)
+        if not MIXPAIR:    
+            start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
+            data_seg = utils.into_trials(data, fs, trial_len, start_points=start_points)
+            att_seg  = utils.into_trials(att, fs, trial_len, start_points=start_points)
+            unatt_seg = utils.into_trials(unatt, fs, trial_len, start_points=start_points)
+        else:
+            # Note that this part is only written for the case when leave_out=2
+            start_points_v1 = np.random.randint(0, T//2-trial_len//2*fs, size=nb_trials)
+            start_points_v2 = start_points_v1 + T//2
+            data_seg_v1 = utils.into_trials(data, fs, trial_len//2, start_points=start_points_v1)
+            data_seg_v2 = utils.into_trials(data, fs, trial_len//2, start_points=start_points_v2)
+            data_seg = [np.concatenate([d1, d2], axis=0) for d1, d2 in zip(data_seg_v1, data_seg_v2)]
+            att_seg_v1 = utils.into_trials(att, fs, trial_len//2, start_points=start_points_v1)
+            att_seg_v2 = utils.into_trials(att, fs, trial_len//2, start_points=start_points_v2)
+            att_seg = [np.concatenate([a1, a2], axis=0) for a1, a2 in zip(att_seg_v1, att_seg_v2)]
+            unatt_seg_v1 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v1)
+            unatt_seg_v2 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v2)
+            unatt_seg = [np.concatenate([u1, u2], axis=0) for u1, u2 in zip(unatt_seg_v1, unatt_seg_v2)]
     nb_trials = len(data_seg)
     corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_seg)]
     corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_seg)]
@@ -206,7 +220,7 @@ def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, BOOTSTRAP=False):
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, BOOTSTRAP=False, MIXPAIR=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     influence_list = []
@@ -238,7 +252,7 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
             corr_unatt_test = model.average_pairwise_correlations([data_test, unatt_test])
             corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test))
             print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test)}')
-            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP)
+            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR)
         else:
             corr_att_test = model.average_pairwise_correlations(views_test)
             corr_sum_att_list.append(cal_corr_sum(corr_att_test))
