@@ -240,7 +240,8 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
     nb_trials_list = []
     for i in range(MAX_ITER):
         model, corr_val, corr_train = train_cca_model(views_train, views_val, L_feats, LWCOV, latent_dimensions=latent_dimensions)
-        model_list.append(model)
+        model_two_enc = copy.deepcopy(model)
+        model_list.append(model_two_enc)
         print(f'Corr_sum_train: {cal_corr_sum(corr_train)}')
         if corr_val is not None:
             print(f'Corr_sum_val: {cal_corr_sum(corr_val)}')
@@ -249,7 +250,6 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         influence_list.append(influence_views[1][:,idx,:])
         mask_list.append(mask)
         rt_list.append(rt)
-        model_two_enc = copy.deepcopy(model)
         model.weights_[1] = model.weights_[1][:L_feats, :]
         if SVAD:
             data_test, att_unatt_test = views_test

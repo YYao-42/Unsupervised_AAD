@@ -88,7 +88,7 @@ def prepare_train_val_test_data_svad(Subj_ID, MOD, modal_dict, feat_att_list, fe
     return views_train_folds, views_val_folds, views_test_folds
 
 
-def cal_corr_sum(corr, range_into_account=5, nb_comp_into_account=2):
+def cal_corr_sum(corr, range_into_account=3, nb_comp_into_account=2):
     corr_ranked = np.sort(corr[:range_into_account])[::-1]
     corr_sum = np.sum(corr_ranked[:nb_comp_into_account])
     return corr_sum

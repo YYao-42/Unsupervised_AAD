@@ -10,6 +10,7 @@ import pandas as pd
 import seaborn as sns
 from numpy import linalg as LA
 from scipy import signal
+from scipy.io import loadmat
 from scipy.linalg import toeplitz, eig, eigh, sqrtm, lstsq, block_diag
 from scipy.sparse.linalg import eigs
 from scipy.stats import zscore, pearsonr, binomtest, binom
@@ -433,15 +434,47 @@ def split_multi_mod_withval_LVO(nested_datalist, leave_out=2, VAL=True, CV=True)
     val_list_folds = [] if VAL else None
     for i in range(0, nb_videos, leave_out):
         indices_train = [j for j in range(nb_videos) if j not in range(i, i+leave_out)]
-        indices_test = [j for j in range(i, i+leave_out-1)] if VAL else [j for j in range(i, i+leave_out)]
+        indices_test_val = [j for j in range(i, i+leave_out)]
         train_list_folds.append([np.concatenate(tuple([mod[i] for i in indices_train]), axis=0) if mod is not None else None for mod in nested_datalist])
-        test_list_folds.append([np.concatenate(tuple([mod[i] for i in indices_test]), axis=0) if mod is not None else None for mod in nested_datalist])
         if VAL:
-            index_val = [i+leave_out-1]
-            val_list_folds.append([np.concatenate(tuple([mod[i] for i in index_val]), axis=0) if mod is not None else None for mod in nested_datalist])
+            test_list_folds.append([np.concatenate(tuple([mod[i][:mod[i].shape[0]//2, ...] for i in indices_test_val]), axis=0) if mod is not None else None for mod in nested_datalist])
+            val_list_folds.append([np.concatenate(tuple([mod[i][mod[i].shape[0]//2:, ...] for i in indices_test_val]), axis=0) if mod is not None else None for mod in nested_datalist])
+        else:
+            test_list_folds.append([np.concatenate(tuple([mod[i] for i in indices_test_val]), axis=0) if mod is not None else None for mod in nested_datalist])
         if not CV:
             break             
     return train_list_folds, test_list_folds, val_list_folds
+
+
+def split_multi_mod_withval_withaug(nested_datalist, nested_auglist, VAL=True):
+    '''
+    Datasets are organized in nested datalist: [[EEG_1, EEG_2, ... ], [Vis_1, Vis_2, ... ], [Sd_1, Sd_2, ... ]]
+    nested_datalist: holds the data in the superimposed-object dataset
+    nested_auglist: holds the data in the single-object dataset
+    - A training set: [EEG_train, Vis_train, Sd_train], where EEG_train is the concatenation of EEG_1, EEG_2, ... in the single-object dataset
+    if VAL:
+    - A test set: [EEG_test, Vis_test, Sd_test], where EEG_test is the concatenation of EEG_1, EEG_3, ... in the superimposed-object dataset
+    - A validation set: [EEG_val, Vis_val, Sd_val], where EEG_val is the concatenation of EEG_2, EEG_4, ... in the superimposed-object dataset
+    if not VAL:
+    - A test set: [EEG_test, Vis_test, Sd_test], where EEG_test is the concatenation of EEG_1, EEG_2, ... in the superimposed-object dataset
+    '''
+    nb_videos = len(nested_datalist[0])
+    nb_aug_videos = len(nested_auglist[0])
+    if len(nested_datalist) != len(nested_auglist):
+        print('Note: The data modalities in nested_datalist and nested_auglist do not match. Check if this is intended.')
+        nb_mod_diff = len(nested_datalist) - len(nested_auglist)
+        if nb_mod_diff > 0:
+            nested_auglist = nested_auglist + [None]*nb_mod_diff
+        else:
+            raise ValueError('The number of data modalities in nested_datalist is less than that in nested_auglist.')
+    train_list = [np.concatenate(tuple([mod[i] for i in range(nb_aug_videos)]), axis=0) if mod is not None else None for mod in nested_auglist]
+    if VAL:
+        test_list = [np.concatenate(tuple([mod[i] for i in range(0, nb_videos, 2)]), axis=0) if mod is not None else None for mod in nested_datalist]
+        val_list = [np.concatenate(tuple([mod[i] for i in range(1, nb_videos, 2)]), axis=0) if mod is not None else None for mod in nested_datalist]
+    else:
+        test_list = [np.concatenate(tuple([mod[i] for i in range(nb_videos)]), axis=0) if mod is not None else None for mod in nested_datalist]
+        val_list = None
+    return train_list, test_list, val_list
 
 
 def sig_level_binomial_test(p_value, total_trials, p=0.5):
@@ -451,7 +484,7 @@ def sig_level_binomial_test(p_value, total_trials, p=0.5):
     return sig_level
 
 
-def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range=5, nb_comp_into_account=2):
+def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range=3, nb_comp_into_account=2):
     nb_test = corr_att.shape[0]
     corr_att = np.array([np.sort(row[:range])[::-1] for row in corr_att])
     corr_unatt = np.array([np.sort(row[:range])[::-1] for row in corr_unatt])
@@ -1090,6 +1123,17 @@ def prepare_data_multimod(selected_subj=None, SINGLEOBJ=False, eeg_region=None):
         Subj_Set = range(nb_subj)
     
     return modal_dict, feat_all_att_list, feat_all_unatt_list, Subj_Set
+
+
+def prepare_speech_data(Subj_ID, data_folder):
+    file_path = f'{data_folder}/dataSubject{Subj_ID}.mat'
+    data_dict = load_data(file_path, squeeze_me=True)
+    fs = data_dict['fs']
+    att_ids = data_dict['attSpeaker']
+    eeg_trials = data_dict['eegTrials']
+    audio_trials = data_dict['audioTrials']
+    trian_len = data_dict['trialLength'] // fs
+    return eeg_trials, audio_trials, att_ids, fs, trian_len
 
 
 def calcu_gaze_velocity(gaze):
