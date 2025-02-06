@@ -41,14 +41,6 @@ class MCCA_LW(_BaseModel):
         super().__init__(latent_dimensions)
 
     def fit(self, views):
-        '''
-        Inputs:
-        mm_data: multi-modal data, each element is a T(#sample)xDx(#channel)xN(#subject) array or a T(#sample)xDx(#channel) array 
-        Outputs:
-        W_list: list of weights corresponding to each modality 
-        S: shared subspace with shape Txn_components
-        lam: eigenvalues, related to mean squared error (not used in analysis)
-        '''
         T, _ = views[0].shape
         dim_list = [data.shape[1] for data in views]
         X = np.concatenate(tuple(views), axis=1)
@@ -58,7 +50,7 @@ class MCCA_LW(_BaseModel):
         # Right scaling
         W = W @ sqrtm(LA.inv(Lam.T @ W.T @ Rxx * T @ W @ Lam))
         # Reshape W as (DL*n_components*N)
-        self.weights_ = utils.W_organize(W, views)
+        self.weights_ = utils.W_organize(np.real(W), views)
         self.n_views_ = len(views)
         return self
 
@@ -77,6 +69,8 @@ class CorrCA_LW(_BaseModel):
         Rb = (Rt - Rw) / (N - 1)
 
         ISC, W = eigh(Rb, Rw, subset_by_index=[D - self.latent_dimensions, D - 1])
+        ISC = np.real(ISC)
+        W = np.real(W)
         ISC = np.squeeze(np.fliplr(np.expand_dims(ISC, axis=0)))
         W = np.fliplr(W)
         # right scaling

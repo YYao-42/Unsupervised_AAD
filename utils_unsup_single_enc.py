@@ -94,7 +94,13 @@ def cal_corr_sum(corr, range_into_account=3, nb_comp_into_account=2):
     return corr_sum
 
 
-def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
+def get_rand_model(model):
+    rand_model = copy.deepcopy(model)
+    rand_model.weights_ = [np.random.randn(*W.shape) for W in model.weights_]
+    return rand_model
+
+
+def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5, evalpara=[3, 2], RANDMODEL=False):
     data_train, feats_att_train, _ = views_train
     if LWCOV:
         best_model = MCCA_LW(latent_dimensions=latent_dimensions)
@@ -107,7 +113,7 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
             model = MCCA(latent_dimensions=latent_dimensions, pca=False, eps=0, c=c) 
             model.fit([data_train, feats_att_train])
             corr = model.average_pairwise_correlations(views_val[:2])
-            corr_sum = cal_corr_sum(corr)
+            corr_sum = cal_corr_sum(corr, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
             print(f'c: {c}, corr_val: {corr}')
             if corr_sum > best_corr_sum:
                 best_corr_sum = corr_sum
@@ -115,29 +121,32 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5):
                 best_model = model
                 best_corr_val = corr
         print(f'Best c: {best_c}')
+    if RANDMODEL:
+        best_model = get_rand_model(best_model)
+        best_corr_val = None
     best_corr_train = best_model.average_pairwise_correlations([data_train, feats_att_train])
     print(f'Corr_train: {best_corr_train}')
     return best_model, best_corr_val, best_corr_train
 
 
-def get_corr_pair(seg_views, model):
+def get_corr_pair(seg_views, model, evalpara=[3, 2]):
     data, feats_att, feats_unatt = seg_views
     corr_att = model.average_pairwise_correlations([data, feats_att])
     corr_unatt = model.average_pairwise_correlations([data, feats_unatt])
-    corr_sum_att = cal_corr_sum(corr_att)
-    corr_sum_unatt = cal_corr_sum(corr_unatt)
+    corr_sum_att = cal_corr_sum(corr_att, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
+    corr_sum_unatt = cal_corr_sum(corr_unatt, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
     corr_sum_pair = np.stack([corr_sum_att, corr_sum_unatt], axis=0)
     return corr_sum_pair
 
 
-def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, coe=1):
+def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, coe=1, evalpara=[3, 2]):
     # Convert views into trials with overlap
     views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
     nb_views = len(views_in_segs)
     nb_segs = len(views_in_segs[0])
     # Get views in each segment
     segs_views = [[views_in_segs[i][j] for i in range(nb_views)] for j in range(nb_segs)]
-    corr_sum_pairs = [get_corr_pair(seg_views, model) for seg_views in segs_views]
+    corr_sum_pairs = [get_corr_pair(seg_views, model, evalpara=evalpara) for seg_views in segs_views]
     corr_sum_pairs = np.stack(corr_sum_pairs, axis=0)
     corr_diff = corr_sum_pairs[:, 0] - corr_sum_pairs[:, 1]
     mask = corr_diff > 0
@@ -165,7 +174,7 @@ def update_training_views(mask, views_in_segs):
     return views_train_updated
 
 
-def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
+def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, evalpara=[3, 2]):
     data, feats = views
     T = data.shape[0]
     if not BOOTSTRAP:
@@ -181,12 +190,12 @@ def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False):
     nb_trials = len(data_seg)
     corr_match = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, feats_seg)]
     corr_mismatch = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, mismatch_seg)]
-    acc = utils.eval_compete(np.stack(corr_match, axis=0), np.stack(corr_mismatch, axis=0), TRAIN_WITH_ATT=True)
+    acc = utils.eval_compete(np.stack(corr_match, axis=0), np.stack(corr_mismatch, axis=0), TRAIN_WITH_ATT=True, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
     nb_correct = round(acc * nb_trials)
     return nb_correct, nb_trials
 
 
-def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=False):
+def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False, evalpara=[3, 2]):
     data, att, unatt = views
     T = data.shape[0]
     if not BOOTSTRAP:
@@ -216,12 +225,12 @@ def svad(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, MIXPAIR=Fals
     nb_trials = len(data_seg)
     corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_seg)]
     corr_u = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, unatt_seg)]
-    acc = utils.eval_compete(np.stack(corr_a, axis=0), np.stack(corr_u, axis=0), TRAIN_WITH_ATT=True)
+    acc = utils.eval_compete(np.stack(corr_a, axis=0), np.stack(corr_u, axis=0), TRAIN_WITH_ATT=True, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
     nb_correct = round(acc * nb_trials)
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, BOOTSTRAP=False, MIXPAIR=False):
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     corr_pair_list = []
@@ -232,30 +241,31 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
     nb_correct_list = []
     nb_trials_list = []
     for i in range(MAX_ITER):
-        model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions)
+        model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT)
         model_list.append(model)
-        print(f'Corr_sum_train: {cal_corr_sum(corr_train)}')
+        print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         if corr_val is not None:
-            print(f'Corr_sum_val: {cal_corr_sum(corr_val)}')
-        corr_sum_pairs, mask, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, coe=coe)
+            print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+        corr_sum_pairs, mask, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, coe=coe, evalpara=evalpara)
         corr_pair_list.append(corr_sum_pairs)
         mask_list.append(mask)
         rt_list.append(rt)
         if SVAD:
             corr_att_test = model.average_pairwise_correlations(views_test[:2])
-            corr_sum_att_list.append(cal_corr_sum(corr_att_test))
-            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test)}')
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
             corr_unatt_test = model.average_pairwise_correlations([views_test[0], views_test[2]])
-            corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test))
-            print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test)}')
-            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR)
+            corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+            nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
         else:
             corr_att_test = model.average_pairwise_correlations(views_test)
-            corr_sum_att_list.append(cal_corr_sum(corr_att_test))
-            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test)}')
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
             corr_sum_unatt_list.append(None)
-            nb_correct, nb_trials = match_mismatch(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP)
+            nb_correct, nb_trials = match_mismatch(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, evalpara=evalpara)
         nb_correct_list.append(nb_correct)
         nb_trials_list.append(nb_trials)
         views_train = update_training_views(mask, views_in_segs)
+        RANDINIT = False
     return model_list, corr_pair_list, mask_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list

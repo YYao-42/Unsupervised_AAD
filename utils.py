@@ -484,10 +484,10 @@ def sig_level_binomial_test(p_value, total_trials, p=0.5):
     return sig_level
 
 
-def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range=3, nb_comp_into_account=2):
+def eval_compete(corr_att, corr_unatt, TRAIN_WITH_ATT, range_into_account=3, nb_comp_into_account=2):
     nb_test = corr_att.shape[0]
-    corr_att = np.array([np.sort(row[:range])[::-1] for row in corr_att])
-    corr_unatt = np.array([np.sort(row[:range])[::-1] for row in corr_unatt])
+    corr_att = np.array([np.sort(row[:range_into_account])[::-1] for row in corr_att])
+    corr_unatt = np.array([np.sort(row[:range_into_account])[::-1] for row in corr_unatt])
     nb_correct = sum(corr_att[:,:nb_comp_into_account].sum(axis=1)>corr_unatt[:,:nb_comp_into_account].sum(axis=1))
     if not TRAIN_WITH_ATT:
         nb_correct = nb_test - nb_correct
@@ -1127,13 +1127,16 @@ def prepare_data_multimod(selected_subj=None, SINGLEOBJ=False, eeg_region=None):
 
 def prepare_speech_data(Subj_ID, data_folder):
     file_path = f'{data_folder}/dataSubject{Subj_ID}.mat'
-    data_dict = load_data(file_path, squeeze_me=True)
-    fs = data_dict['fs']
-    att_ids = data_dict['attSpeaker']
+    data_dict = loadmat(file_path, squeeze_me=True)
+    labels_att = data_dict['attSpeaker'] # 1 or 2
+    labels_unatt = 3 - labels_att
     eeg_trials = data_dict['eegTrials']
+    nb_trials = len(eeg_trials)
+    eeg_trials = [eeg_trials[i] for i in range(nb_trials)]
     audio_trials = data_dict['audioTrials']
-    trian_len = data_dict['trialLength'] // fs
-    return eeg_trials, audio_trials, att_ids, fs, trian_len
+    att_trials = [np.expand_dims(audio[:,label-1], axis=1) for audio, label in zip(audio_trials, labels_att)]
+    unatt_trials = [np.expand_dims(audio[:,label-1], axis=1) for audio, label in zip(audio_trials, labels_unatt)]
+    return eeg_trials, att_trials, unatt_trials
 
 
 def calcu_gaze_velocity(gaze):
