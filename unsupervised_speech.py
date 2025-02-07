@@ -84,27 +84,35 @@ for SEED in args.seeds:
         print(f'#########Subject: {Subj_ID}#########')
         corr_sum_att_folds = []
         corr_sum_unatt_folds = []
+        nb_correct_train_folds = []
+        nb_trials_train_folds = []
         nb_correct_folds = []
         nb_trials_folds = []
         views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_unatt_trials], [(L_data, offset_data), (L_feats, offset_feats)], folds, trainmin, SEED)
         for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
             print(f'############Fold: {i}############')
             views_val = None
-            _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, TWOENC=TWOENC, RANDINIT=RANDINIT)
+            _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list  = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, TWOENC=TWOENC, RANDINIT=RANDINIT)
             corr_sum_att_folds.append(np.array(corr_sum_att_list))
             corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
+            nb_correct_train_folds.append(np.array(nb_correct_train_list))
+            nb_trials_train_folds.append(np.array(nb_trials_train_list))
             nb_correct_folds.append(np.array(nb_correct_list))
             nb_trials_folds.append(np.array(nb_trials_list))
         corr_sum_att = np.stack(corr_sum_att_folds, axis=0)
         corr_sum_unatt = np.stack(corr_sum_unatt_folds, axis=0)
+        nb_correct_train = np.stack(nb_correct_train_folds, axis=0)
+        nb_trials_train = np.stack(nb_trials_train_folds, axis=0)
         nb_correct = np.stack(nb_correct_folds, axis=0)
         nb_trials = np.stack(nb_trials_folds, axis=0)
+        acc_train = nb_correct_train/nb_trials_train
         acc = nb_correct/nb_trials
         print(f'################Correlation (Att): {np.mean(corr_sum_att, axis=0)}################')
         print(f'################Correlation (Unatt): {np.mean(corr_sum_unatt, axis=0)}################')
-        print(f'################Accuracy: {np.mean(acc, axis=0)}################')
+        print(f'################Accuracy (Train): {np.mean(acc_train, axis=0)}################)')
+        print(f'################Accuracy (Test): {np.mean(acc, axis=0)}################')
         with open(file_name, 'wb') as f:
-            res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc': acc}
+            res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc_train': acc_train, 'acc': acc}
             pickle.dump(res, f)
     
     if not RANDINIT:

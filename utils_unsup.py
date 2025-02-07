@@ -89,13 +89,14 @@ def cal_corr_sum(corr, range_into_account=3, nb_comp_into_account=2):
     return corr_sum
 
 
-def get_rand_model(model):
+def get_rand_model(model, SEED):
+    rng = np.random.RandomState(SEED)
     rand_model = copy.deepcopy(model)
-    rand_model.weights_ = [np.random.randn(*W.shape) for W in model.weights_]
+    rand_model.weights_ = [rng.randn(*W.shape) for W in model.weights_]
     return rand_model
 
 
-def train_cca_model(views_train, views_val, L_feats, LWCOV=False, latent_dimensions=5, evalpara=[3, 2], RANDMODEL=False):
+def train_cca_model(views_train, views_val, L_feats, LWCOV=False, latent_dimensions=5, evalpara=[3, 2], RANDMODEL=False, SEED=None):
     if LWCOV:
         best_model = MCCA_LW(latent_dimensions=latent_dimensions)
         best_model.fit(views_train)
@@ -122,14 +123,15 @@ def train_cca_model(views_train, views_val, L_feats, LWCOV=False, latent_dimensi
                 best_corr_val = corr
         print(f'Best c: {best_c}')
     if RANDMODEL:
-        best_model = get_rand_model(best_model)
+        assert SEED is not None, 'SEED must be provided for random initialization'
+        best_model = get_rand_model(best_model, SEED)
         best_corr_val = None
     best_corr_train = best_model.average_pairwise_correlations(views_train)
     print(f'Corr_train: {best_corr_train}')
     return best_model, best_corr_val, best_corr_train
 
 
-def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER, CROSSVIEW=True, coe=1, SAMEWEIGHT=False):
+def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER, true_label, CROSSVIEW=True, coe=1, SAMEWEIGHT=False):
     # Convert views into trials with overlap
     views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
     nb_views = len(views_in_segs)
@@ -152,8 +154,10 @@ def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feat
     idx_keep = idx_sort[int(coe*nb_detected_seg):]
     mask[idx_keep] = True
     rt = 1 - nb_detected_seg / len(influ_diff)
-    print(f'Ratio of True: {rt}')
-    return influence_views, mask, rt, views_in_segs
+    print(f'Ratio of Predicted Att: {rt}')
+    updated_label = true_label==mask if true_label is not None else mask
+    print('Acc (train): ', np.sum(updated_label)/len(updated_label))
+    return influence_views, mask, updated_label, rt, views_in_segs
 
 
 def update_training_views(mask, views_in_segs, L_feats):
@@ -237,25 +241,32 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, TWOENC=False, RANDINIT=False):
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, TWOENC=False, RANDINIT=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     influence_list = []
     mask_list = []
+    updated_label_list = []
     rt_list = []
     corr_sum_att_list = []
     corr_sum_unatt_list = []
+    nb_correct_train_list = []
+    nb_trials_train_list = []
     nb_correct_list = []
     nb_trials_list = []
+    true_label = None
     for i in range(MAX_ITER):
-        model, corr_val, corr_train = train_cca_model(views_train, views_val, L_feats, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT)
+        model, corr_val, corr_train = train_cca_model(views_train, views_val, L_feats, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
         model_two_enc = copy.deepcopy(model)
         model_list.append(model_two_enc)
         print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         if corr_val is not None:
             print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         idx = np.argmax(corr_val)
-        influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT)
+        influence_views, mask, updated_label, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, true_label=true_label, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT)
+        updated_label_list.append(updated_label)
+        nb_correct_train_list.append(np.sum(updated_label))
+        nb_trials_train_list.append(len(updated_label))
         influence_list.append(influence_views[1][:,idx,:])
         mask_list.append(mask)
         rt_list.append(rt)
@@ -284,4 +295,5 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         nb_trials_list.append(nb_trials)
         views_train = update_training_views(mask, views_in_segs, L_feats)
         RANDINIT = False
-    return model_list, influence_list, mask_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list
+        true_label = updated_label
+    return model_list, influence_list, mask_list, updated_label_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list

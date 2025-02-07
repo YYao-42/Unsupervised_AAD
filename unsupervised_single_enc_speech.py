@@ -7,22 +7,24 @@ import os
 from sklearn.model_selection import KFold
 
 
-def prepare_folds_per_view(trials, n_folds, SEED):
+def prepare_folds_per_view(trials, n_folds, trainmin, SEED):
     kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
     train_folds = []
     test_folds = []
     for train_index, test_index in kf.split(trials):
+        if trainmin is not None:
+            train_index = train_index[:trainmin]
         train_folds.append([trials[i] for i in train_index])
         test_folds.append([trials[i] for i in test_index])
     train_folds = [np.concatenate(fold, axis=0) for fold in train_folds]
     test_folds = [np.concatenate(fold, axis=0) for fold in test_folds]
     return train_folds, test_folds
 
-def prepare_folds_all_views(views, hparas, n_folds, SEED):
+def prepare_folds_all_views(views, hparas, n_folds, trainmin, SEED):
     train_folds_views = []
     test_folds_views = []
     for view, hpara in zip(views, hparas):
-        train_folds, test_folds = prepare_folds_per_view(view, n_folds, SEED)
+        train_folds, test_folds = prepare_folds_per_view(view, n_folds, trainmin, SEED)
         train_folds_views.append([utils_unsup_single_enc.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in train_folds])
         test_folds_views.append([utils_unsup_single_enc.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in test_folds])
     views_train_folds = [folds for folds in zip(*train_folds_views)]
@@ -31,7 +33,8 @@ def prepare_folds_all_views(views, hparas, n_folds, SEED):
 
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument('--folds', type=float, default=10, help='The number of folds')
+argparser.add_argument('--folds', type=int, default=5, help='The number of folds')
+argparser.add_argument('--trainmin', type=int, help='Restrict the number of training samples')
 argparser.add_argument('--compete_resolu', type=int, default=60, help='Resolution of the compete task')
 argparser.add_argument('--maxiter', type=int, default=8, help='Maximum number of iterations')
 argparser.add_argument('--flippct', type=float, help='The percentage of flipped labels. If None, the percentage changes with the iteration.')
@@ -54,6 +57,7 @@ L_data, offset_data = args.hparadata
 L_feats, offset_feats = args.hparafeats
 evalpara = args.evalpara
 folds = args.folds
+trainmin = args.trainmin
 
 fs = 20
 trial_len = 60
@@ -74,31 +78,39 @@ for SEED in args.seeds:
     print(f'#########Seed: {SEED}#########')
     for Subj_ID in Subj_IDs:
         eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-        file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}.pkl'
+        file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}.pkl'
         print(f'#########Subject: {Subj_ID}#########')
         corr_sum_att_folds = []
         corr_sum_unatt_folds = []
+        nb_correct_train_folds = []
+        nb_trials_train_folds = []
         nb_correct_folds = []
         nb_trials_folds = []
-        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, SEED)
+        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, trainmin, SEED)
         for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
             print(f'############Fold: {i}############')
             views_val = None
-            _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_list, nb_trials_list = utils_unsup_single_enc.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, RANDINIT=RANDINIT)
+            _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list = utils_unsup_single_enc.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, RANDINIT=RANDINIT)
             corr_sum_att_folds.append(np.array(corr_sum_att_list))
             corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
+            nb_correct_train_folds.append(np.array(nb_correct_train_list))
+            nb_trials_train_folds.append(np.array(nb_trials_train_list))
             nb_correct_folds.append(np.array(nb_correct_list))
             nb_trials_folds.append(np.array(nb_trials_list))
         corr_sum_att = np.stack(corr_sum_att_folds, axis=0)
         corr_sum_unatt = np.stack(corr_sum_unatt_folds, axis=0)
+        nb_correct_train = np.stack(nb_correct_train_folds, axis=0)
+        nb_trials_train = np.stack(nb_trials_train_folds, axis=0)
         nb_correct = np.stack(nb_correct_folds, axis=0)
         nb_trials = np.stack(nb_trials_folds, axis=0)
+        acc_train = nb_correct_train/nb_trials_train
         acc = nb_correct/nb_trials
         print(f'################Correlation (Att): {np.mean(corr_sum_att, axis=0)}################')
         print(f'################Correlation (Unatt): {np.mean(corr_sum_unatt, axis=0)}################')
-        print(f'################Accuracy: {np.mean(acc, axis=0)}################')
+        print(f'################Accuracy (Train): {np.mean(acc_train, axis=0)}################)')
+        print(f'################Accuracy (Test): {np.mean(acc, axis=0)}################')
         with open(file_name, 'wb') as f:
-            res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc': acc}
+            res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc_train': acc_train, 'acc': acc}
             pickle.dump(res, f)
 
     if not RANDINIT:
