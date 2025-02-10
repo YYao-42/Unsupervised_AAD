@@ -141,7 +141,7 @@ def get_corr_pair(seg_views, model, evalpara=[3, 2]):
     return corr_sum_pair
 
 
-def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, true_label, coe=1, evalpara=[3, 2]):
+def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, coe=1, evalpara=[3, 2]):
     # Convert views into trials with overlap
     views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
     nb_views = len(views_in_segs)
@@ -160,12 +160,39 @@ def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, true_label, c
     mask[idx_keep] = True
     rt = 1 - nb_detected_seg / len(corr_diff)
     print(f'Ratio of Predicted Att: {rt}')
+    return corr_sum_pairs, mask, rt, views_in_segs
+
+
+def get_mask_unbiased(views_train, fs, track_resolu, ITER, coe=1, evalpara=[3, 2], latent_dimensions=5, RANDINIT=False, SEED=None):
+    # Convert views into trials with overlap
+    views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
+    nb_views = len(views_in_segs)
+    nb_segs = len(views_in_segs[0])
+    corr_sum_pairs = np.zeros((nb_segs, 2))
+    for i in range(nb_segs):
+        views_test = [views_in_segs[j][i] for j in range(nb_views)]
+        views_train = [np.concatenate([views_in_segs[j][k] for k in range(nb_segs) if k != i], axis=0) for j in range(nb_views)]
+        views_val = None
+        LWCOV = True
+        model, _, _ = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
+        corr_sum_pair = get_corr_pair(views_test, model, evalpara=evalpara)
+        corr_sum_pairs[i,:] = corr_sum_pair
+    corr_diff = corr_sum_pairs[:, 0] - corr_sum_pairs[:, 1]
+    mask = corr_diff > 0
+    nb_detected_seg = np.sum(corr_diff < 0)
+    # sort the influence difference from the smallest to the largest
+    idx_sort = np.argsort(corr_diff)
+    coe = 0.5**(ITER) if coe is None else coe
+    idx_keep = idx_sort[int(coe*nb_detected_seg):]
+    mask[idx_keep] = True
+    rt = 1 - nb_detected_seg / len(corr_diff)
+    print(f'Ratio of Predicted Att: {rt}')
+    return corr_sum_pairs, mask, rt, views_in_segs
+
+
+def update_training_views(mask, views_in_segs, true_label):
     updated_label = true_label==mask if true_label is not None else mask
     print('Acc (train): ', np.sum(updated_label)/len(updated_label))
-    return corr_sum_pairs, mask, updated_label, rt, views_in_segs
-
-
-def update_training_views(mask, views_in_segs):
     for i, indicator in enumerate(mask):
         if not indicator:
             feats_att_seg_i = views_in_segs[1][i].copy()
@@ -175,7 +202,7 @@ def update_training_views(mask, views_in_segs):
     feats_h_att_train_updated = np.concatenate(tuple(views_in_segs[1]), axis=0)
     feats_h_unatt_train_updated = np.concatenate(tuple(views_in_segs[2]), axis=0)
     views_train_updated = [data_h_train_updated, feats_h_att_train_updated, feats_h_unatt_train_updated]
-    return views_train_updated
+    return updated_label, views_train_updated
 
 
 def match_mismatch(views, model, fs, trial_len, overlap=0.9, BOOTSTRAP=False, evalpara=[3, 2]):
@@ -234,7 +261,7 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False):
+def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False, UNBIASED=False):
     views_train = copy.deepcopy(views_train_ori)
     model_list = []
     corr_pair_list = []
@@ -254,10 +281,10 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         if corr_val is not None:
             print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
-        corr_sum_pairs, mask, updated_label, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, true_label=true_label, coe=coe, evalpara=evalpara)
-        updated_label_list.append(updated_label)
-        nb_correct_train_list.append(np.sum(updated_label))
-        nb_trials_train_list.append(len(updated_label))
+        if UNBIASED:
+            corr_sum_pairs, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, ITER=i, coe=coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
+        else:
+            corr_sum_pairs, mask, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, coe=coe, evalpara=evalpara)
         corr_pair_list.append(corr_sum_pairs)
         mask_list.append(mask)
         rt_list.append(rt)
@@ -277,7 +304,10 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
             nb_correct, nb_trials = match_mismatch(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, evalpara=evalpara)
         nb_correct_list.append(nb_correct)
         nb_trials_list.append(nb_trials)
-        views_train = update_training_views(mask, views_in_segs)
-        RANDINIT = False
+        updated_label, views_train = update_training_views(mask, views_in_segs, true_label)
+        updated_label_list.append(updated_label)
+        nb_correct_train_list.append(np.sum(updated_label))
+        nb_trials_train_list.append(len(updated_label))
         true_label = updated_label
+        RANDINIT = False
     return model_list, corr_pair_list, mask_list, updated_label_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list
