@@ -35,6 +35,7 @@ def prepare_folds_all_views(views, hparas, n_folds, trainmin, SEED):
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--folds', type=int, default=5, help='The number of folds')
 argparser.add_argument('--trainmin', type=int, help='Restrict the number of training samples')
+argparser.add_argument('--track_resolu', type=int, help='Tracking resolution in the training set')
 argparser.add_argument('--compete_resolu', type=int, default=60, help='Resolution of the compete task')
 argparser.add_argument('--maxiter', type=int, default=8, help='Maximum number of iterations')
 argparser.add_argument('--flippct', type=float, help='The percentage of flipped labels. If None, the percentage changes with the iteration.')
@@ -48,6 +49,7 @@ argparser.add_argument('--randinit', action='store_true', default=False, help='S
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
 args = argparser.parse_args()
 
+track_resolu = args.track_resolu if args.track_resolu is not None else 60
 compete_resolu = args.compete_resolu
 MAX_ITER = args.maxiter
 LWCOV = args.lwcov
@@ -63,8 +65,6 @@ trainmin = args.trainmin
 
 fs = 20
 trial_len = 60
-label_resolu = trial_len
-track_resolu = trial_len
 params_hankel = [(L_data, offset_data), (L_feats, offset_feats)]
 latent_dimensions = 5
 table_path = f'tables/SpeechData/'
@@ -80,7 +80,7 @@ for SEED in args.seeds:
     print(f'#########Seed: {SEED}#########')
     for Subj_ID in Subj_IDs:
         eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-        file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_unbiased' if UNBIASED else ''}.pkl'
+        file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_unbiased' if UNBIASED else ''}.pkl'
         print(f'#########Subject: {Subj_ID}#########')
         corr_sum_att_folds = []
         corr_sum_unatt_folds = []

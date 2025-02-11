@@ -281,10 +281,11 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         if corr_val is not None:
             print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+        flip_coe = coe if not RANDINIT else 1
         if UNBIASED:
-            corr_sum_pairs, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, ITER=i, coe=coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
+            corr_sum_pairs, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, ITER=i, coe=flip_coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
         else:
-            corr_sum_pairs, mask, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, coe=coe, evalpara=evalpara)
+            corr_sum_pairs, mask, rt, views_in_segs = get_mask_from_corr(views_train, model, fs, track_resolu, ITER=i, coe=flip_coe, evalpara=evalpara)
         corr_pair_list.append(corr_sum_pairs)
         mask_list.append(mask)
         rt_list.append(rt)

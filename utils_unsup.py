@@ -293,10 +293,11 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         if corr_val is not None:
             print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         idx = np.argmax(corr_val)
+        flip_coe = coe if not RANDINIT else 1
         if UNBIASED:
-            influence_views, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
+            influence_views, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
         else:
-            influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=coe, SAMEWEIGHT=SAMEWEIGHT)
+            influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, SAMEWEIGHT=SAMEWEIGHT)
         influence_list.append(influence_views[1][:,idx,:])
         mask_list.append(mask)
         rt_list.append(rt)
