@@ -13,62 +13,46 @@ def process_data_per_view(view, L, offset, NORMALIZE=True):
     return view_hankelized
 
 
-def change_feats_label(views, fs, TRUELABEL_PERCENT, resolu, RANDSEED):
-    np.random.seed(RANDSEED)
-    data, feats_att_unatt = views
-    feats_segs = utils.into_trials_with_overlap(feats_att_unatt, fs, resolu, overlap=0)
-    data_segs = utils.into_trials_with_overlap(data, fs, resolu, overlap=0)
-    nb_trials = len(feats_segs)
-    nb_false_label = nb_trials - int(nb_trials * TRUELABEL_PERCENT)
-    # ceate random index for false label
-    idx_false_label = np.random.choice(range(nb_trials), nb_false_label, replace=False)
-    # change the label
-    for idx in idx_false_label:
-        temp =  feats_segs[idx][:, 0].copy()
-        feats_segs[idx][:, 0] = feats_segs[idx][:, 1]
-        feats_segs[idx][:, 1] = temp
-    feats_att_unatt = np.concatenate(tuple(feats_segs), axis=0)
-    data = np.concatenate(tuple(data_segs), axis=0)
-    return [data, feats_att_unatt]
-
-
-def prepare_train_val_test_data(Subj_ID, MOD, modal_dict, modal_dict_SO, feat_att_unatt_list, feat_SO_list, L_data, offset_data, L_feats, offset_feats, fs, TRUELABEL_PERCENT, resolu, RANDSEED, KEEP_TRAIN_PERCENT=None):
+def prepare_train_val_test_data(Subj_ID, MOD, modal_dict, modal_dict_SO, feat_att_unatt_list, feat_SO_list, hparas, fs, trainmin=None):
     # Load data for the specific subject
     data_onesubj_list = [data[:,:,Subj_ID] for data in modal_dict[MOD]]
     data_onesubj_SO_list = [data[:,:,Subj_ID] for data in modal_dict_SO[MOD]]
     # Use SI data for training
-    data_SI = np.concatenate(tuple(data_onesubj_list), axis=0)
-    feats_SI = np.concatenate(tuple(feat_att_unatt_list), axis=0)
-    data_train, feats_train = change_feats_label([data_SI, feats_SI], fs, TRUELABEL_PERCENT, resolu, RANDSEED)
-    if KEEP_TRAIN_PERCENT is not None:
-        T_train = data_train.shape[0]
-        data_train = data_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
-        feats_train = feats_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
+    data_train = np.concatenate(tuple(data_onesubj_list), axis=0)
+    feats_train = np.concatenate(tuple(feat_att_unatt_list), axis=0)
+    if trainmin is not None:
+        nb_samples = int(fs*60*trainmin)
+        data_train = data_train[:nb_samples,:]
+        feats_train = feats_train[:nb_samples,:]
     # Use the SO data for validation and testing
     test_list_folds, val_list_folds = utils.split_multi_mod_LVO([data_onesubj_SO_list, feat_SO_list], leave_out=2)
     data_test, feats_test = test_list_folds[0]
     data_val, feats_val = val_list_folds[0]
+    L_data, offset_data = hparas[0]
+    L_feats, offset_feats = hparas[1]
     views_train = [process_data_per_view(data_train, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_train, L_feats, offset_feats, NORMALIZE=True)]
     views_val = [process_data_per_view(data_val, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_val, L_feats, offset_feats, NORMALIZE=True)]
     views_test = [process_data_per_view(data_test, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_test, L_feats, offset_feats, NORMALIZE=True)]
     return views_train, views_val, views_test
 
 
-def prepare_train_val_test_data_svad(Subj_ID, MOD, modal_dict, feat_att_unatt_list, L_data, offset_data, L_feats, offset_feats, fs, TRUELABEL_PERCENT, resolu, RANDSEED, leave_out=2, KEEP_TRAIN_PERCENT=None, LWCOV=False):
+def prepare_train_val_test_data_svad(Subj_ID, MOD, modal_dict, feat_att_unatt_list, hparas, fs, leave_out=2, trainmin=None, LWCOV=False):
     # Load data for the specific subject
     data_onesubj_list = [data[:,:,Subj_ID] for data in modal_dict[MOD]]
     # Split the SI data into training and validation sets
     train_list_folds, test_list_folds, val_list_folds = utils.split_multi_mod_withval_LVO([data_onesubj_list, feat_att_unatt_list], leave_out=leave_out, VAL=not LWCOV)
     nb_videos = len(feat_att_unatt_list)
+    L_data, offset_data = hparas[0]
+    L_feats, offset_feats = hparas[1]
     views_train_folds = []
     views_val_folds = []
     views_test_folds = []
     for fold in range(nb_videos//leave_out):
-        data_train, feats_train = change_feats_label(train_list_folds[fold], fs, TRUELABEL_PERCENT, resolu, RANDSEED)
-        if KEEP_TRAIN_PERCENT is not None:
-            T_train = data_train.shape[0]
-            data_train = data_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
-            feats_train = feats_train[:int(T_train*KEEP_TRAIN_PERCENT),:]
+        data_train, feats_train = train_list_folds[fold]
+        if trainmin is not None:
+            nb_samples = int(fs*60*trainmin)
+            data_train = data_train[:nb_samples,:]
+            feats_train = feats_train[:nb_samples,:]
         data_test, feats_test = test_list_folds[fold]
         views_train = [process_data_per_view(data_train, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_train, L_feats, offset_feats, NORMALIZE=True)]
         views_test = [process_data_per_view(data_test, L_data, offset_data, NORMALIZE=True), process_data_per_view(feats_test, L_feats, offset_feats, NORMALIZE=True)]
@@ -131,9 +115,35 @@ def train_cca_model(views_train, views_val, L_feats, LWCOV=False, latent_dimensi
     return best_model, best_corr_val, best_corr_train
 
 
-def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER, CROSSVIEW=True, coe=1, SAMEWEIGHT=False):
+def get_segments(view, fs, resolu, overlap=0, MIXPAIR=False, start_points=None):
+    '''
+    if MIXPAIR:
+    Assume that one subvideo in the experiment is the superimposed version of vidA and vidB. The participants watch the superimposed video twice, once with vidA attended and the other time with vidB attended.
+    When dividing data into segments (either in the training or the test set), the first half of one segment is when vidA is attended and the second half is when vidB is attended.
+    If there are multiple video pairs {(vidA1, vidB1), (vidA2, vidB2), ...}, the view is the concatenation of(data_vidA1_att, data_vidA2_att, ..., data_vidB1_att, data_vidB2_att, ...).
+    '''
+    T = view.shape[0]
+    if not MIXPAIR:
+        if start_points is None:
+            segs = utils.into_trials_with_overlap(view, fs, resolu, overlap=overlap)
+        else:
+            segs = utils.into_trials(view, fs, resolu, start_points=start_points)
+    else:
+        if start_points is None:
+            segs_part1 = utils.into_trials_with_overlap(view[:T//2], fs, resolu//2, overlap=overlap) 
+            segs_part2 = utils.into_trials_with_overlap(view[T//2:], fs, resolu//2, overlap=overlap)
+        else:
+            start_points_v1 = start_points
+            start_points_v2 = start_points_v1 + T//2
+            segs_part1 = utils.into_trials(view, fs, resolu//2, start_points=start_points_v1)
+            segs_part2 = utils.into_trials(view, fs, resolu//2, start_points=start_points_v2)
+        segs = [np.concatenate([s1, s2], axis=0) for s1, s2 in zip(segs_part1, segs_part2)]
+    return segs
+
+
+def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, MIXPAIR=False):
     # Convert views into trials with overlap
-    views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
+    views_in_segs = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
     nb_views = len(views_in_segs)
     nb_segs = len(views_in_segs[0])
     # Get views in each segment
@@ -158,9 +168,9 @@ def get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feat
     return influence_views, mask, rt, views_in_segs
 
 
-def get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER, CROSSVIEW=True, coe=1, evalpara=[3, 2], latent_dimensions=5, RANDINIT=False, SEED=None):
+def get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER, CROSSVIEW=True, coe=1, evalpara=[3, 2], latent_dimensions=5, RANDINIT=False, SEED=None, MIXPAIR=False):
     # Convert views into trials with overlap
-    views_in_segs = [utils.into_trials_with_overlap(view, fs, track_resolu, overlap=0) for view in views_train]
+    views_in_segs = views_in_segs = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
     nb_views = len(views_in_segs)
     nb_segs = len(views_in_segs[0])
     segs_influence_views = []
@@ -229,35 +239,19 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     data, att_unatt = views
     T = data.shape[0]
     L_feats = att_unatt.shape[1]//2
-    if TWOENC:
-        assert model.weights_[1].shape[0] == att_unatt.shape[1], 'The model is not in two-encoder mode'
     att = att_unatt[:, :L_feats]
     unatt = att_unatt[:, L_feats:]
-    if not BOOTSTRAP:
-        data_seg = utils.into_trials_with_overlap(data, fs, trial_len, overlap=overlap)
-        att_seg = utils.into_trials_with_overlap(att, fs, trial_len, overlap=overlap)
-        unatt_seg = utils.into_trials_with_overlap(unatt, fs, trial_len, overlap=overlap)
-    else:
+    if BOOTSTRAP:
         nb_trials = int(T/fs*3)
-        if not MIXPAIR:    
-            start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
-            data_seg = utils.into_trials(data, fs, trial_len, start_points=start_points)
-            att_seg  = utils.into_trials(att, fs, trial_len, start_points=start_points)
-            unatt_seg = utils.into_trials(unatt, fs, trial_len, start_points=start_points)
+        if MIXPAIR:
+            start_points = np.random.randint(0, T//2-trial_len//2*fs, size=nb_trials)
         else:
-            # Note that this part is only written for the case when leave_out=2
-            start_points_v1 = np.random.randint(0, T//2-trial_len//2*fs, size=nb_trials)
-            start_points_v2 = start_points_v1 + T//2
-            data_seg_v1 = utils.into_trials(data, fs, trial_len//2, start_points=start_points_v1)
-            data_seg_v2 = utils.into_trials(data, fs, trial_len//2, start_points=start_points_v2)
-            data_seg = [np.concatenate([d1, d2], axis=0) for d1, d2 in zip(data_seg_v1, data_seg_v2)]
-            att_seg_v1 = utils.into_trials(att, fs, trial_len//2, start_points=start_points_v1)
-            att_seg_v2 = utils.into_trials(att, fs, trial_len//2, start_points=start_points_v2)
-            att_seg = [np.concatenate([a1, a2], axis=0) for a1, a2 in zip(att_seg_v1, att_seg_v2)]
-            unatt_seg_v1 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v1)
-            unatt_seg_v2 = utils.into_trials(unatt, fs, trial_len//2, start_points=start_points_v2)
-            unatt_seg = [np.concatenate([u1, u2], axis=0) for u1, u2 in zip(unatt_seg_v1, unatt_seg_v2)]
+            start_points = np.random.randint(0, T-trial_len*fs, size=nb_trials)
+    else:
+        start_points = None
+    data_seg, att_seg, unatt_seg = [get_segments(view, fs, trial_len, overlap=overlap, MIXPAIR=MIXPAIR, start_points=start_points) for view in [data, att, unatt]]
     if TWOENC:
+        assert model.weights_[1].shape[0] == att_unatt.shape[1], 'The model is not in two-encoder mode'
         att_unatt_seg = [np.concatenate([a, u], axis=1) for a, u in zip(att_seg, unatt_seg)]
         unatt_att_seg = [np.concatenate([u, a], axis=1) for a, u in zip(att_seg, unatt_seg)]
         corr_a = [model.average_pairwise_correlations([d, f]) for d, f in zip(data_seg, att_unatt_seg)]
@@ -295,9 +289,9 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         idx = np.argmax(corr_val)
         flip_coe = coe if not RANDINIT else 1
         if UNBIASED:
-            influence_views, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED)
+            influence_views, mask, rt, views_in_segs = get_mask_unbiased(views_train, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, evalpara=evalpara, latent_dimensions=latent_dimensions, RANDINIT=RANDINIT, SEED=SEED, MIXPAIR=MIXPAIR)
         else:
-            influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, SAMEWEIGHT=SAMEWEIGHT)
+            influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, SAMEWEIGHT=SAMEWEIGHT, MIXPAIR=MIXPAIR)
         influence_list.append(influence_views[1][:,idx,:])
         mask_list.append(mask)
         rt_list.append(rt)
@@ -308,10 +302,10 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
             unatt_test = att_unatt_test[:, L_feats:]
             corr_att_test = model.average_pairwise_correlations([data_test, att_test])
             corr_sum_att_list.append(cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
-            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+            print(f'Corr_att_test: {corr_att_test}')
             corr_unatt_test = model.average_pairwise_correlations([data_test, unatt_test])
             corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
-            print(f'Corr_sum_unatt_test: {cal_corr_sum(corr_unatt_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+            print(f'Corr_unatt_test: {corr_unatt_test}')
             if TWOENC:
                 nb_correct, nb_trials = svad(views_test, model_two_enc, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC, evalpara=evalpara)
             else:
