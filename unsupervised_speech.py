@@ -6,24 +6,25 @@ import pickle
 import os
 from sklearn.model_selection import KFold
 
-def prepare_folds_per_view(trials, n_folds, trainmin, SEED):
+
+def prepare_folds_per_view(trials, n_folds, nbtraintrials, SEED):
     kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
     train_folds = []
     test_folds = []
     for train_index, test_index in kf.split(trials):
-        if trainmin is not None:
-            train_index = train_index[:trainmin]
+        if nbtraintrials is not None:
+            train_index = train_index[:nbtraintrials]
         train_folds.append([trials[i] for i in train_index])
         test_folds.append([trials[i] for i in test_index])
     train_folds = [np.concatenate(fold, axis=0) for fold in train_folds]
     test_folds = [np.concatenate(fold, axis=0) for fold in test_folds]
     return train_folds, test_folds
 
-def prepare_folds_all_views(views, hparas, n_folds, trainmin, SEED):
+def prepare_folds_all_views(views, hparas, n_folds, nbtraintrials, SEED):
     train_folds_views = []
     test_folds_views = []
     for view, hpara in zip(views, hparas):
-        train_folds, test_folds = prepare_folds_per_view(view, n_folds, trainmin, SEED)
+        train_folds, test_folds = prepare_folds_per_view(view, n_folds, nbtraintrials, SEED)
         train_folds_views.append([utils_unsup.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in train_folds])
         test_folds_views.append([utils_unsup.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in test_folds])
     views_train_folds = [folds for folds in zip(*train_folds_views)]
@@ -32,15 +33,16 @@ def prepare_folds_all_views(views, hparas, n_folds, trainmin, SEED):
 
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument('--folds', type=int, default=5, help='The number of folds')
-argparser.add_argument('--trainmin', type=int, help='Restrict the number of training samples')
+argparser.add_argument('--dataset', type=str, help='The name of the dataset')
+argparser.add_argument('--folds', type=int, help='The number of folds')
+argparser.add_argument('--nbtraintrials', type=int, help='Restrict the number of training trials')
 argparser.add_argument('--track_resolu', type=int, help='Tracking resolution in the training set')
-argparser.add_argument('--compete_resolu', type=int, default=60, help='Resolution of the compete task')
+argparser.add_argument('--compete_resolu', type=int, help='Resolution of the compete task')
 argparser.add_argument('--maxiter', type=int, default=8, help='Maximum number of iterations')
 argparser.add_argument('--flippct', type=float, help='The percentage of flipped labels. If None, the percentage changes with the iteration.')
-argparser.add_argument('--hparadata', type=int, nargs='+', default=[6, 5], help='Parameters of the hankel matrix for the data')
-argparser.add_argument('--hparafeats', type=int, nargs='+', default=[1, 0], help='Parameters of the hankel matrix for the features')
-argparser.add_argument('--evalpara', type=int, nargs='+', default=[1, 1], help='Parameters (range_into_account, nb_comp_into_account) for the evaluation')
+argparser.add_argument('--hparadata', type=int, nargs='+', help='Parameters of the hankel matrix for the data')
+argparser.add_argument('--hparafeats', type=int, nargs='+', help='Parameters of the hankel matrix for the features')
+argparser.add_argument('--evalpara', type=int, nargs='+', default=[3, 2], help='Parameters (range_into_account, nb_comp_into_account) for the evaluation')
 argparser.add_argument('--seeds', type=int, nargs='+', default=[2, 4, 8], help='Random seeds')
 argparser.add_argument('--lwcov', action='store_true', default=False, help='Whether to use ledoit-wolf covariance estimator')
 argparser.add_argument('--bootstrap', action='store_true', default=False, help='Whether to use bootstrap for mm task')
@@ -49,30 +51,50 @@ argparser.add_argument('--twoenc', action='store_true', default=False, help='Whe
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
 args = argparser.parse_args()
 
-track_resolu = args.track_resolu if args.track_resolu is not None else 60
-compete_resolu = args.compete_resolu
+dataset = args.dataset
+nbtraintrials = args.nbtraintrials
+if dataset == 'Neetha':
+    folds = 4 if args.folds is None else args.folds
+    trainmin = nbtraintrials
+    fs = 20
+    track_resolu = 60 if args.track_resolu is None else args.track_resolu
+    compete_resolu = 20 if args.compete_resolu is None else args.compete_resolu
+    hparadata = [4, 3] if args.hparadata is None else args.hparadata
+    hparafeats = [6, 0] if args.hparafeats is None else args.hparafeats
+if dataset == 'earEEG':
+    folds = 3 if args.folds is None else args.folds
+    trainmin = int(nbtraintrials*10)
+    fs = 20
+    track_resolu = 60 if args.track_resolu is None else args.track_resolu
+    compete_resolu = 20 if args.compete_resolu is None else args.compete_resolu
+    hparadata = [4, 3] if args.hparadata is None else args.hparadata
+    hparafeats = [6, 0] if args.hparafeats is None else args.hparafeats
+if dataset == 'fuglsang2018':
+    folds = 4 if args.folds is None else args.folds
+    trainmin = round(nbtraintrials*5/6)
+    fs = 32
+    track_resolu = 50 if args.track_resolu is None else args.track_resolu
+    compete_resolu = 25 if args.compete_resolu is None else args.compete_resolu
+    hparadata = [4, 3] if args.hparadata is None else args.hparadata
+    hparafeats = [9, 0] if args.hparafeats is None else args.hparafeats
+
 MAX_ITER = args.maxiter
+coe = args.flippct
 LWCOV = args.lwcov
 BOOTSTRAP = args.bootstrap
 RANDINIT = args.randinit
 TWOENC = args.twoenc
 UNBIASED = args.unbiased
-coe = args.flippct
-L_data, offset_data = args.hparadata
-L_feats, offset_feats = args.hparafeats
+L_data, offset_data = hparadata
+L_feats, offset_feats = hparafeats
 evalpara = args.evalpara
-folds = args.folds
-trainmin = args.trainmin
-
-fs = 20
-trial_len = 60
 params_hankel = [(L_data, offset_data), (L_feats, offset_feats)]
 latent_dimensions = 5
-table_path = f'tables/SpeechData/'
+table_path = f'tables/{dataset}/'
 utils.create_dir(table_path, CLEAR=False)
 
 # Load the data
-data_folder = '../../Experiments/Data/Neetha/'
+data_folder = f'../../Experiments/Data/{dataset}/'
 files = [f for f in os.listdir(data_folder) if f.endswith('.mat')]
 Subj_IDs = [int(''.join(filter(str.isdigit, f))) for f in files]
 Subj_IDs.sort()
