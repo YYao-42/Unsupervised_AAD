@@ -109,7 +109,7 @@ for SEED in args.seeds:
         nb_trials_train_folds = []
         nb_correct_folds = []
         nb_trials_folds = []
-        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, trainmin, SEED)
+        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, nbtraintrials, SEED)
         for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
             print(f'############Fold: {i}############')
             views_val = None
