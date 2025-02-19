@@ -13,7 +13,8 @@ def prepare_folds_per_view(trials, n_folds, nbtraintrials, SEED):
     test_folds = []
     for train_index, test_index in kf.split(trials):
         if nbtraintrials is not None:
-            train_index = train_index[:nbtraintrials]
+            rng = np.random.RandomState(SEED)
+            train_index = rng.choice(train_index, nbtraintrials, replace=False)
         train_folds.append([trials[i] for i in train_index])
         test_folds.append([trials[i] for i in test_index])
     train_folds = [np.concatenate(fold, axis=0) for fold in train_folds]

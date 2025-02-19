@@ -1,6 +1,7 @@
 import utils
 import numpy as np
 import copy
+import utils_unsup_single_enc
 from cca_zoo.linear import MCCA, rCCA
 from algo_suppl import MCCA_LW
 from itertools import product
@@ -265,8 +266,10 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, TWOENC=False, RANDINIT=False, UNBIASED=False):
+def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, TWOENC=False, RANDINIT=False, UNBIASED=False, BREAK=False):
     views_train = copy.deepcopy(views_train_ori)
+    views_val = copy.deepcopy(views_val_ori)
+    views_test = copy.deepcopy(views_test_ori)
     model_list = []
     influence_list = []
     mask_list = []
@@ -324,4 +327,73 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
         nb_trials_train_list.append(len(updated_label))
         true_label = updated_label
         RANDINIT = False
+        if rt > 0.95 and BREAK:
+            break
     return model_list, influence_list, mask_list, updated_label_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list
+
+
+def iterate_switch(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, CROSSVIEW=True, coe=1, SAMEWEIGHT=False, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, TWOENC=False, RANDINIT=False, UNBIASED_SE=False):
+    views_train = copy.deepcopy(views_train_ori)
+    views_val = copy.deepcopy(views_val_ori)
+    views_test = copy.deepcopy(views_test_ori)
+    rt_list = []
+    corr_sum_att_list = []
+    corr_sum_unatt_list = []
+    nb_correct_train_list = []
+    nb_trials_train_list = []
+    nb_correct_list = []
+    nb_trials_list = []
+    true_label = None
+    for i in range(MAX_ITER):
+        model, corr_val, corr_train = train_cca_model(views_train, views_val, L_feats, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
+        model_two_enc = copy.deepcopy(model)
+        print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+        if corr_val is not None:
+            print(f'Corr_sum_val: {cal_corr_sum(corr_val, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+        idx = np.argmax(corr_val)
+        flip_coe = coe if not RANDINIT else 1
+        influence_views, mask, rt, views_in_segs = get_mask_from_influence(views_train, model, fs, track_resolu, L_data, L_feats, idx, ITER=i, CROSSVIEW=CROSSVIEW, coe=flip_coe, SAMEWEIGHT=SAMEWEIGHT, MIXPAIR=MIXPAIR)
+        rt_list.append(rt)
+        model.weights_[1] = model.weights_[1][:L_feats, :]
+        if SVAD:
+            data_test, att_unatt_test = views_test
+            att_test = att_unatt_test[:, :L_feats]
+            unatt_test = att_unatt_test[:, L_feats:]
+            corr_att_test = model.average_pairwise_correlations([data_test, att_test])
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_att_test: {corr_att_test}')
+            corr_unatt_test = model.average_pairwise_correlations([data_test, unatt_test])
+            corr_sum_unatt_list.append(cal_corr_sum(corr_unatt_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_unatt_test: {corr_unatt_test}')
+            if TWOENC:
+                nb_correct, nb_trials = svad(views_test, model_two_enc, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC, evalpara=evalpara)
+            else:
+                nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, TWOENC=TWOENC, evalpara=evalpara)
+        else:
+            corr_att_test = model.average_pairwise_correlations(views_test)
+            corr_sum_att_list.append(cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1]))
+            print(f'Corr_sum_att_test: {cal_corr_sum(corr_att_test, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
+            corr_sum_unatt_list.append(None)
+            nb_correct, nb_trials = match_mismatch(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, evalpara=evalpara)
+        nb_correct_list.append(nb_correct)
+        nb_trials_list.append(nb_trials)
+        updated_label, views_train = update_training_views(mask, views_in_segs, L_feats, true_label)
+        nb_correct_train_list.append(np.sum(updated_label))
+        nb_trials_train_list.append(len(updated_label))
+        true_label = updated_label
+        RANDINIT = False
+        if rt > 0.95:
+            break
+    nb_iter = i+1
+    if nb_iter < MAX_ITER:
+        views_train_single = [views_train[0], views_train[1][:, :L_feats], views_train[1][:, L_feats:]]
+        views_val_single = [views_val_ori[0], views_val_ori[1][:, :L_feats], views_val_ori[1][:, L_feats:]] if views_val_ori is not None else None
+        views_test_single = [views_test_ori[0], views_test_ori[1][:, :L_feats], views_test_ori[1][:, L_feats:]]
+        _, _, _, _, _, corr_sum_att_clist, corr_sum_unatt_clist, nb_correct_train_clist, nb_trials_train_clist, nb_correct_clist, nb_trials_clist = utils_unsup_single_enc.iterate(views_train_single, views_val_single, views_test_single, fs, track_resolu, compete_resolu, SEED, SVAD=SVAD, MAX_ITER=(MAX_ITER-nb_iter), LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, RANDINIT=RANDINIT, UNBIASED=UNBIASED_SE, true_label=true_label)
+        corr_sum_att_list.extend(corr_sum_att_clist)
+        corr_sum_unatt_list.extend(corr_sum_unatt_clist)
+        nb_correct_train_list.extend(nb_correct_train_clist)
+        nb_trials_train_list.extend(nb_trials_train_clist)
+        nb_correct_list.extend(nb_correct_clist)
+        nb_trials_list.extend(nb_trials_clist)
+    return corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list

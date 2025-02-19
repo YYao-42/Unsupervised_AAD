@@ -253,8 +253,10 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False, UNBIASED=False):
+def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False, UNBIASED=False, true_label=None):
     views_train = copy.deepcopy(views_train_ori)
+    views_val = copy.deepcopy(views_val_ori)
+    views_test = copy.deepcopy(views_test_ori)
     model_list = []
     corr_pair_list = []
     mask_list = []
@@ -266,7 +268,6 @@ def iterate(views_train_ori, views_val, views_test, fs, track_resolu, compete_re
     nb_trials_train_list = []
     nb_correct_list = []
     nb_trials_list = []
-    true_label = None
     for i in range(MAX_ITER):
         model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
         model_list.append(model)

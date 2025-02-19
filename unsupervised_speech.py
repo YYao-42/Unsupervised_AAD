@@ -13,7 +13,8 @@ def prepare_folds_per_view(trials, n_folds, nbtraintrials, SEED):
     test_folds = []
     for train_index, test_index in kf.split(trials):
         if nbtraintrials is not None:
-            train_index = train_index[:nbtraintrials]
+            rng = np.random.RandomState(SEED)
+            train_index = rng.choice(train_index, nbtraintrials, replace=False)
         train_folds.append([trials[i] for i in train_index])
         test_folds.append([trials[i] for i in test_index])
     train_folds = [np.concatenate(fold, axis=0) for fold in train_folds]
@@ -49,6 +50,7 @@ argparser.add_argument('--bootstrap', action='store_true', default=False, help='
 argparser.add_argument('--randinit', action='store_true', default=False, help='Start with random initialization')
 argparser.add_argument('--twoenc', action='store_true', default=False, help='Whether to use two encoders for the svad task')
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
+argparser.add_argument('--switch', action='store_true', default=False, help='Switch to single-enc mode after convergence')
 args = argparser.parse_args()
 
 dataset = args.dataset
@@ -85,6 +87,7 @@ BOOTSTRAP = args.bootstrap
 RANDINIT = args.randinit
 TWOENC = args.twoenc
 UNBIASED = args.unbiased
+SWITCH = args.switch
 L_data, offset_data = hparadata
 L_feats, offset_feats = hparafeats
 evalpara = args.evalpara
@@ -104,7 +107,7 @@ for SEED in args.seeds:
     for Subj_ID in Subj_IDs:
         eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
         att_unatt_trials = [np.stack([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)]
-        file_name = f'{table_path}{Subj_ID}_twoenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_twoenc' if TWOENC else ''}{'_unbiased' if UNBIASED else ''}.pkl'
+        file_name = f'{table_path}{Subj_ID}_twoenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_twoenc' if TWOENC else ''}{'_unbiased' if UNBIASED else ''}{'_switch' if SWITCH else ''}.pkl'
         print(f'#########Subject: {Subj_ID}#########')
         corr_sum_att_folds = []
         corr_sum_unatt_folds = []
@@ -112,11 +115,14 @@ for SEED in args.seeds:
         nb_trials_train_folds = []
         nb_correct_folds = []
         nb_trials_folds = []
-        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_unatt_trials], [(L_data, offset_data), (L_feats, offset_feats)], folds, nb_trials, SEED)
+        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_unatt_trials], [(L_data, offset_data), (L_feats, offset_feats)], folds, nbtraintrials, SEED)
         for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
             print(f'############Fold: {i}############')
             views_val = None
-            _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list  = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, TWOENC=TWOENC, RANDINIT=RANDINIT, UNBIASED=UNBIASED)
+            if SWITCH:
+                corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list = utils_unsup.iterate_switch(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, TWOENC=TWOENC, RANDINIT=RANDINIT, UNBIASED_SE=False)
+            else:
+                _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list  = utils_unsup.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, TWOENC=TWOENC, RANDINIT=RANDINIT, UNBIASED=UNBIASED)
             corr_sum_att_folds.append(np.array(corr_sum_att_list))
             corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
             nb_correct_train_folds.append(np.array(nb_correct_train_list))
