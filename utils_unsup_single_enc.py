@@ -113,6 +113,18 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5, ev
     return best_model, best_corr_val, best_corr_train
 
 
+def train_cca_model_adaptive(views_train, Rinit, Dinit, latent_dimensions=5, weightpara=[0.0, 0.0], RANDMODEL=False, SEED=None):
+    data_train, feats_att_train, _ = views_train
+    best_model = MCCA_LW(latent_dimensions=latent_dimensions, alpha=weightpara[0], beta=weightpara[1])
+    best_model.fit([data_train, feats_att_train], Rinit=Rinit, Dinit=Dinit)
+    if RANDMODEL:
+        assert SEED is not None, 'SEED must be provided for random initialization'
+        best_model = get_rand_model(best_model, SEED)
+    best_corr_train = best_model.average_pairwise_correlations([data_train, feats_att_train])
+    print(f'Corr_train: {best_corr_train}')
+    return best_model
+
+
 def get_corr_pair(seg_views, model, evalpara=[3, 2]):
     data, feats_att, feats_unatt = seg_views
     corr_att = model.average_pairwise_correlations([data, feats_att])
@@ -305,3 +317,51 @@ def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, co
         true_label = updated_label
         RANDINIT = False
     return model_list, corr_pair_list, mask_list, updated_label_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list
+
+
+def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, pool_size, latent_dimensions=5, weightpara=[0.0, 0.0], evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False):
+    T_track = fs*track_resolu
+    views_train = copy.deepcopy(views_train_ori)
+    views_test = copy.deepcopy(views_test_ori)
+    views_in_segs_train = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
+    nb_views = len(views_in_segs_train)
+    nb_segs_train = len(views_in_segs_train[0])
+    assert nb_segs_train>pool_size, 'The number of segments in the training set must be larger than the pool size'
+    segs_views_train = [[views_in_segs_train[i][j] for i in range(nb_views)] for j in range(nb_segs_train)]
+    Rinit = None
+    Dinit = None
+    pool_segs = [segs[:pool_size] for segs in views_in_segs_train]
+    # get random mask (len = pool_size) for the first pool
+    rng = np.random.RandomState(SEED)
+    mask = rng.choice([False, True], size=pool_size)
+    true_label = [True]*pool_size
+    labels, pool = update_training_views(mask, pool_segs, true_label)
+    nb_correct_list = []
+    nb_trials_list = []
+    for i in range(pool_size, nb_segs_train):
+        seg_to_pred = segs_views_train[i]
+        model = train_cca_model_adaptive(pool, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED)
+        Rinit = model.Rxx
+        Dinit = model.Dxx
+        # predict the label of the next segment
+        corr_sum_pair = get_corr_pair(seg_to_pred, model, evalpara=evalpara)
+        label = corr_sum_pair[0] > corr_sum_pair[1]
+        labels = np.append(labels, label)
+        if label:
+            att = np.concatenate([pool[1], seg_to_pred[1]], axis=0)
+            unatt = np.concatenate([pool[2], seg_to_pred[2]], axis=0)
+        else:
+            att = np.concatenate([pool[1], seg_to_pred[2]], axis=0)
+            unatt = np.concatenate([pool[2], seg_to_pred[1]], axis=0)
+        eeg = np.concatenate([pool[0], seg_to_pred[0]], axis=0)
+        pool = [eeg[T_track:,:], att[T_track:,:], unatt[T_track:,:]]
+        # predict the labels of the segments in the test set
+        nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
+        nb_correct_list.append(nb_correct)
+        nb_trials_list.append(nb_trials)
+    model = train_cca_model_adaptive(pool, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED)
+    nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
+    nb_correct_list.append(nb_correct)
+    nb_trials_list.append(nb_trials)
+    return labels, nb_correct_list, nb_trials_list
+

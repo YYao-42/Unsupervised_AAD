@@ -37,14 +37,21 @@ class _BaseModel:
 
 
 class MCCA_LW(_BaseModel):
-    def __init__(self, latent_dimensions: int = 5):
+    def __init__(self, latent_dimensions: int = 5, alpha: float=0.0, beta: float=0.0):
         super().__init__(latent_dimensions)
+        self.alpha = alpha
+        self.beta = beta
 
-    def fit(self, views):
+    def fit(self, views, Rinit=None, Dinit=None):
         T, _ = views[0].shape
         dim_list = [data.shape[1] for data in views]
         X = np.concatenate(tuple(views), axis=1)
         Rxx, Dxx = utils.get_cov_mtx(X, dim_list, regularization='lwcov')
+        if Rinit is not None:
+            Rxx = self.alpha * Rinit + (1 - self.alpha) * Rxx
+            Dxx = self.beta * Dinit + (1 - self.beta) * Dxx
+        self.Rxx = Rxx
+        self.Dxx = Dxx
         lam, W = eigh(Dxx, Rxx, subset_by_index=[0,self.latent_dimensions-1]) # automatically ascend
         Lam = np.diag(lam)
         # Right scaling

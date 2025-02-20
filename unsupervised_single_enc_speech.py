@@ -49,6 +49,8 @@ argparser.add_argument('--lwcov', action='store_true', default=False, help='Whet
 argparser.add_argument('--bootstrap', action='store_true', default=False, help='Whether to use bootstrap for mm task')
 argparser.add_argument('--randinit', action='store_true', default=False, help='Start with random initialization')
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
+argparser.add_argument('--timeadaptive', action='store_true', default=False, help='Use time-adaptive version')
+argparser.add_argument('--weightpara', type=float, nargs='+', default=[0.9, 0.9], help='alpha and beta for the time-adaptive version')
 args = argparser.parse_args()
 
 dataset = args.dataset
@@ -84,9 +86,11 @@ LWCOV = args.lwcov
 BOOTSTRAP = args.bootstrap
 RANDINIT = args.randinit
 UNBIASED = args.unbiased
+TIMEADAPTIVE = args.timeadaptive
 L_data, offset_data = hparadata
 L_feats, offset_feats = hparafeats
 evalpara = args.evalpara
+weightpara = args.weightpara
 params_hankel = [(L_data, offset_data), (L_feats, offset_feats)]
 latent_dimensions = 5
 table_path = f'tables/{dataset}/'
@@ -98,44 +102,67 @@ files = [f for f in os.listdir(data_folder) if f.endswith('.mat')]
 Subj_IDs = [int(''.join(filter(str.isdigit, f))) for f in files]
 Subj_IDs.sort()
 
-for SEED in args.seeds:
-    print(f'#########Seed: {SEED}#########')
-    for Subj_ID in Subj_IDs:
-        eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-        file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_unbiased' if UNBIASED else ''}.pkl'
-        print(f'#########Subject: {Subj_ID}#########')
-        corr_sum_att_folds = []
-        corr_sum_unatt_folds = []
-        nb_correct_train_folds = []
-        nb_trials_train_folds = []
-        nb_correct_folds = []
-        nb_trials_folds = []
-        views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, nbtraintrials, SEED)
-        for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
-            print(f'############Fold: {i}############')
-            views_val = None
-            _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list = utils_unsup_single_enc.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, RANDINIT=RANDINIT, UNBIASED=UNBIASED)
-            corr_sum_att_folds.append(np.array(corr_sum_att_list))
-            corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
-            nb_correct_train_folds.append(np.array(nb_correct_train_list))
-            nb_trials_train_folds.append(np.array(nb_trials_train_list))
-            nb_correct_folds.append(np.array(nb_correct_list))
-            nb_trials_folds.append(np.array(nb_trials_list))
-        corr_sum_att = np.stack(corr_sum_att_folds, axis=0)
-        corr_sum_unatt = np.stack(corr_sum_unatt_folds, axis=0)
-        nb_correct_train = np.stack(nb_correct_train_folds, axis=0)
-        nb_trials_train = np.stack(nb_trials_train_folds, axis=0)
-        nb_correct = np.stack(nb_correct_folds, axis=0)
-        nb_trials = np.stack(nb_trials_folds, axis=0)
-        acc_train = nb_correct_train/nb_trials_train
-        acc = nb_correct/nb_trials
-        print(f'################Correlation (Att): {np.mean(corr_sum_att, axis=0)}################')
-        print(f'################Correlation (Unatt): {np.mean(corr_sum_unatt, axis=0)}################')
-        print(f'################Accuracy (Train): {np.mean(acc_train, axis=0)}################)')
-        print(f'################Accuracy (Test): {np.mean(acc, axis=0)}################')
-        with open(file_name, 'wb') as f:
-            res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc_train': acc_train, 'acc': acc}
-            pickle.dump(res, f)
-
-    if not RANDINIT:
-        break
+if not TIMEADAPTIVE:
+    for SEED in args.seeds:
+        print(f'#########Seed: {SEED}#########')
+        for Subj_ID in Subj_IDs:
+            eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
+            file_name = f'{table_path}{Subj_ID}_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_coe{coe}_nbiter{MAX_ITER}_seed{SEED}{'_lwcov' if LWCOV else ''}{'_bootstrap' if BOOTSTRAP else ''}{'_randinit' if RANDINIT else ''}{'_unbiased' if UNBIASED else ''}.pkl'
+            print(f'#########Subject: {Subj_ID}#########')
+            corr_sum_att_folds = []
+            corr_sum_unatt_folds = []
+            nb_correct_train_folds = []
+            nb_trials_train_folds = []
+            nb_correct_folds = []
+            nb_trials_folds = []
+            views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, nbtraintrials, SEED)
+            for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
+                print(f'############Fold: {i}############')
+                views_val = None
+                _, _, _, _, _, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list = utils_unsup_single_enc.iterate(views_train, views_val, views_test, fs, track_resolu, compete_resolu, SEED, SVAD=True, MAX_ITER=MAX_ITER, LWCOV=LWCOV, coe=coe, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, MIXPAIR=False, RANDINIT=RANDINIT, UNBIASED=UNBIASED)
+                corr_sum_att_folds.append(np.array(corr_sum_att_list))
+                corr_sum_unatt_folds.append(np.array(corr_sum_unatt_list))
+                nb_correct_train_folds.append(np.array(nb_correct_train_list))
+                nb_trials_train_folds.append(np.array(nb_trials_train_list))
+                nb_correct_folds.append(np.array(nb_correct_list))
+                nb_trials_folds.append(np.array(nb_trials_list))
+            corr_sum_att = np.stack(corr_sum_att_folds, axis=0)
+            corr_sum_unatt = np.stack(corr_sum_unatt_folds, axis=0)
+            nb_correct_train = np.stack(nb_correct_train_folds, axis=0)
+            nb_trials_train = np.stack(nb_trials_train_folds, axis=0)
+            nb_correct = np.stack(nb_correct_folds, axis=0)
+            nb_trials = np.stack(nb_trials_folds, axis=0)
+            acc_train = nb_correct_train/nb_trials_train
+            acc = nb_correct/nb_trials
+            print(f'################Correlation (Att): {np.mean(corr_sum_att, axis=0)}################')
+            print(f'################Correlation (Unatt): {np.mean(corr_sum_unatt, axis=0)}################')
+            print(f'################Accuracy (Train): {np.mean(acc_train, axis=0)}################)')
+            print(f'################Accuracy (Test): {np.mean(acc, axis=0)}################')
+            with open(file_name, 'wb') as f:
+                res = {'corr_sum_att': corr_sum_att, 'corr_sum_unatt': corr_sum_unatt, 'acc_train': acc_train, 'acc': acc}
+                pickle.dump(res, f)
+        
+        if not RANDINIT:
+            break
+else:
+    for SEED in args.seeds:
+        print(f'#########Seed: {SEED}#########')
+        for Subj_ID in Subj_IDs:
+            eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
+            file_name = f'{table_path}{Subj_ID}_adap_singleenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}.pkl'
+            print(f'#########Subject: {Subj_ID}#########')
+            nb_correct_folds = []
+            nb_trials_folds = []
+            views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, None, SEED)
+            for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
+                print(f'############Fold: {i}############')
+                _, nb_correct_list, nb_trials_list = utils_unsup_single_enc.recursive(views_train, views_test, fs, track_resolu, compete_resolu, SEED, nbtraintrials, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                nb_correct_folds.append(np.array(nb_correct_list))
+                nb_trials_folds.append(np.array(nb_trials_list))
+            nb_correct = np.stack(nb_correct_folds, axis=0)
+            nb_trials = np.stack(nb_trials_folds, axis=0)
+            acc = nb_correct/nb_trials
+            print(f'################Accuracy (Test): {np.mean(acc, axis=0)}################')
+            with open(file_name, 'wb') as f:
+                res = {'acc': acc}
+                pickle.dump(res, f)
