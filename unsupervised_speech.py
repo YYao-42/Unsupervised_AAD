@@ -52,7 +52,7 @@ argparser.add_argument('--twoenc', action='store_true', default=False, help='Whe
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
 argparser.add_argument('--switch', action='store_true', default=False, help='Switch to single-enc mode after convergence')
 argparser.add_argument('--timeadaptive', action='store_true', default=False, help='Use time-adaptive version')
-argparser.add_argument('--weightpara', type=float, nargs='+', default=[0.95, 0.95], help='alpha and beta for the time-adaptive version')
+argparser.add_argument('--weightpara', type=float, nargs='+', default=[0.9, 0.9], help='alpha and beta for the time-adaptive version')
 args = argparser.parse_args()
 
 dataset = args.dataset
@@ -67,7 +67,7 @@ if dataset == 'Neetha':
     hparafeats = [6, 0] if args.hparafeats is None else args.hparafeats
 if dataset == 'earEEG':
     folds = 3 if args.folds is None else args.folds
-    trainmin = int(nbtraintrials*10)
+    trainmin = int(nbtraintrials*10) if nbtraintrials is not None else None
     fs = 20
     track_resolu = 60 if args.track_resolu is None else args.track_resolu
     compete_resolu = 20 if args.compete_resolu is None else args.compete_resolu
@@ -75,7 +75,7 @@ if dataset == 'earEEG':
     hparafeats = [6, 0] if args.hparafeats is None else args.hparafeats
 if dataset == 'fuglsang2018':
     folds = 4 if args.folds is None else args.folds
-    trainmin = round(nbtraintrials*5/6)
+    trainmin = round(nbtraintrials*5/6) if nbtraintrials is not None else None
     fs = 32
     track_resolu = 50 if args.track_resolu is None else args.track_resolu
     compete_resolu = 25 if args.compete_resolu is None else args.compete_resolu
@@ -97,7 +97,7 @@ evalpara = args.evalpara
 weightpara = args.weightpara
 params_hankel = [(L_data, offset_data), (L_feats, offset_feats)]
 latent_dimensions = 5
-table_path = f'tables/{dataset}/'
+table_path = f'tables/{dataset}/recursive/' if TIMEADAPTIVE else f'tables/{dataset}/'
 utils.create_dir(table_path, CLEAR=False)
 
 # Load the data
@@ -158,14 +158,14 @@ else:
         for Subj_ID in Subj_IDs:
             eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
             att_unatt_trials = [np.stack([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)]
-            file_name = f'{table_path}{Subj_ID}_adap_twoenc_folds{folds}{'_trainmin'+str(trainmin) if trainmin is not None else ''}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}.pkl'
+            file_name = f'{table_path}{Subj_ID}_adap_twoenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}.pkl'
             print(f'#########Subject: {Subj_ID}#########')
             nb_correct_folds = []
             nb_trials_folds = []
             views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_unatt_trials], [(L_data, offset_data), (L_feats, offset_feats)], folds, None, SEED)
             for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
                 print(f'############Fold: {i}############')
-                _, nb_correct_list, nb_trials_list = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, nbtraintrials, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                _, nb_correct_list, nb_trials_list = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
                 nb_correct_folds.append(np.array(nb_correct_list))
                 nb_trials_folds.append(np.array(nb_trials_list))
             nb_correct = np.stack(nb_correct_folds, axis=0)

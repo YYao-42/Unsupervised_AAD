@@ -2,7 +2,7 @@ import utils
 import numpy as np
 import copy
 from cca_zoo.linear import MCCA, rCCA
-from algo_suppl import MCCA_LW
+from algo_suppl import MCCA_LW, LS_LW
 from itertools import product
 
 
@@ -83,10 +83,10 @@ def get_rand_model(model, SEED):
     return rand_model
 
 
-def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5, evalpara=[3, 2], RANDMODEL=False, SEED=None):
+def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5, evalpara=[3, 2], RANDMODEL=False, SEED=None, LS=False):
     data_train, feats_att_train, _ = views_train
     if LWCOV:
-        best_model = MCCA_LW(latent_dimensions=latent_dimensions)
+        best_model = MCCA_LW(latent_dimensions=latent_dimensions) if not LS else LS_LW()
         best_model.fit([data_train, feats_att_train])
         best_corr_val = None
     else:
@@ -113,10 +113,10 @@ def train_cca_model(views_train, views_val, LWCOV=False, latent_dimensions=5, ev
     return best_model, best_corr_val, best_corr_train
 
 
-def train_cca_model_adaptive(views_train, Rinit, Dinit, latent_dimensions=5, weightpara=[0.0, 0.0], RANDMODEL=False, SEED=None):
+def train_cca_model_adaptive(views_train, Rinit, Dinit, latent_dimensions=5, weightpara=[0.0, 0.0], RANDMODEL=False, SEED=None, LS=False):
     data_train, feats_att_train, _ = views_train
-    best_model = MCCA_LW(latent_dimensions=latent_dimensions, alpha=weightpara[0], beta=weightpara[1])
-    best_model.fit([data_train, feats_att_train], Rinit=Rinit, Dinit=Dinit)
+    best_model = MCCA_LW(latent_dimensions=latent_dimensions, alpha=weightpara[0], beta=weightpara[1]) if not LS else LS_LW(alpha=weightpara[0], beta=weightpara[1])
+    best_model.fit([data_train, feats_att_train], Rinit=Rinit, Dinit=Dinit) if not LS else best_model.fit([data_train, feats_att_train], Rinit=Dinit, rinit=Rinit)
     if RANDMODEL:
         assert SEED is not None, 'SEED must be provided for random initialization'
         best_model = get_rand_model(best_model, SEED)
@@ -183,7 +183,7 @@ def get_mask_from_corr(views_train, model, fs, track_resolu, ITER, coe=1, evalpa
     return corr_sum_pairs, mask, rt, views_in_segs
 
 
-def get_mask_unbiased(views_train, fs, track_resolu, ITER, coe=1, evalpara=[3, 2], latent_dimensions=5, RANDINIT=False, SEED=None, MIXPAIR=False):
+def get_mask_unbiased(views_train, fs, track_resolu, ITER, coe=1, evalpara=[3, 2], latent_dimensions=5, RANDINIT=False, SEED=None, MIXPAIR=False, LS=False):
     # Convert views into trials with overlap
     views_in_segs = views_in_segs = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
     nb_views = len(views_in_segs)
@@ -194,7 +194,7 @@ def get_mask_unbiased(views_train, fs, track_resolu, ITER, coe=1, evalpara=[3, 2
         views_train = [np.concatenate([views_in_segs[j][k] for k in range(nb_segs) if k != i], axis=0) for j in range(nb_views)]
         views_val = None
         LWCOV = True
-        model, _, _ = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
+        model, _, _ = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED, LS=LS)
         corr_sum_pair = get_corr_pair(views_test, model, evalpara=evalpara)
         corr_sum_pairs[i,:] = corr_sum_pair
     corr_diff = corr_sum_pairs[:, 0] - corr_sum_pairs[:, 1]
@@ -265,7 +265,7 @@ def svad(views, model, fs, trial_len, overlap=0, BOOTSTRAP=False, MIXPAIR=False,
     return nb_correct, nb_trials
 
 
-def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False, UNBIASED=False, true_label=None):
+def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, SVAD=False, MAX_ITER=10, LWCOV=True, coe=1, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, RANDINIT=False, UNBIASED=False, true_label=None, LS=False):
     views_train = copy.deepcopy(views_train_ori)
     views_val = copy.deepcopy(views_val_ori)
     views_test = copy.deepcopy(views_test_ori)
@@ -281,7 +281,7 @@ def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, co
     nb_correct_list = []
     nb_trials_list = []
     for i in range(MAX_ITER):
-        model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED)
+        model, corr_val, corr_train = train_cca_model(views_train, views_val, LWCOV, latent_dimensions=latent_dimensions, evalpara=evalpara, RANDMODEL=RANDINIT, SEED=SEED, LS=LS)
         model_list.append(model)
         print(f'Corr_sum_train: {cal_corr_sum(corr_train, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])}')
         if corr_val is not None:
@@ -319,47 +319,38 @@ def iterate(views_train_ori, views_val_ori, views_test_ori, fs, track_resolu, co
     return model_list, corr_pair_list, mask_list, updated_label_list, rt_list, corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list
 
 
-def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, pool_size, latent_dimensions=5, weightpara=[0.0, 0.0], evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False):
-    T_track = fs*track_resolu
+def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu, SEED, latent_dimensions=5, weightpara=[0.0, 0.0], evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, LS=False):
     views_train = copy.deepcopy(views_train_ori)
     views_test = copy.deepcopy(views_test_ori)
     views_in_segs_train = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
     nb_views = len(views_in_segs_train)
     nb_segs_train = len(views_in_segs_train[0])
-    assert nb_segs_train>pool_size, 'The number of segments in the training set must be larger than the pool size'
     segs_views_train = [[views_in_segs_train[i][j] for i in range(nb_views)] for j in range(nb_segs_train)]
+    # generate a random encoder and decoder
+    model = train_cca_model_adaptive(segs_views_train[0], None, None, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=SEED, LS=LS)
     Rinit = None
     Dinit = None
-    pool_segs = [segs[:pool_size] for segs in views_in_segs_train]
-    # get random mask (len = pool_size) for the first pool
-    rng = np.random.RandomState(SEED)
-    mask = rng.choice([False, True], size=pool_size)
-    true_label = [True]*pool_size
-    labels, pool = update_training_views(mask, pool_segs, true_label)
+    labels = []
     nb_correct_list = []
     nb_trials_list = []
-    for i in range(pool_size, nb_segs_train):
+    for i in range(0, nb_segs_train):
+        # get accuracy in the test set
+        nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
+        nb_correct_list.append(nb_correct)
+        nb_trials_list.append(nb_trials)
+        # Acquire next segment, predict the label
         seg_to_pred = segs_views_train[i]
-        model = train_cca_model_adaptive(pool, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED)
-        Rinit = model.Rxx
-        Dinit = model.Dxx
-        # predict the label of the next segment
         corr_sum_pair = get_corr_pair(seg_to_pred, model, evalpara=evalpara)
         label = corr_sum_pair[0] > corr_sum_pair[1]
         labels = np.append(labels, label)
         if label:
-            att = np.concatenate([pool[1], seg_to_pred[1]], axis=0)
-            unatt = np.concatenate([pool[2], seg_to_pred[2]], axis=0)
+            seg_predicted = seg_to_pred
         else:
-            att = np.concatenate([pool[1], seg_to_pred[2]], axis=0)
-            unatt = np.concatenate([pool[2], seg_to_pred[1]], axis=0)
-        eeg = np.concatenate([pool[0], seg_to_pred[0]], axis=0)
-        pool = [eeg[T_track:,:], att[T_track:,:], unatt[T_track:,:]]
-        # predict the labels of the segments in the test set
-        nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
-        nb_correct_list.append(nb_correct)
-        nb_trials_list.append(nb_trials)
-    model = train_cca_model_adaptive(pool, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED)
+            seg_predicted = [seg_to_pred[0], seg_to_pred[2], seg_to_pred[1]]
+        # update the model
+        model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED, LS=LS)
+        Rinit = model.Rxx if not LS else model.rdf
+        Dinit = model.Dxx if not LS else model.Rdd
     nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
     nb_correct_list.append(nb_correct)
     nb_trials_list.append(nb_trials)
