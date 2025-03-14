@@ -6,6 +6,11 @@ import pickle
 import os
 from sklearn.model_selection import KFold
 
+def trial_further_split(trials, trial_len, fs):
+    new_trials = []
+    for trial in trials:
+        new_trials.extend([trial[i:i+fs*trial_len] for i in range(0, len(trial), fs*trial_len)])
+    return new_trials
 
 def prepare_folds_per_view(trials, n_folds, nbtraintrials, SEED):
     kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
@@ -21,11 +26,28 @@ def prepare_folds_per_view(trials, n_folds, nbtraintrials, SEED):
     test_folds = [np.concatenate(fold, axis=0) for fold in test_folds]
     return train_folds, test_folds
 
-def prepare_folds_all_views(views, hparas, n_folds, nbtraintrials, SEED):
+def prepare_folds_per_view_Neetha_adaptive(trials, n_folds, SEED):
+    # take out the last 24 min to be the test set
+    test_trials = trials[-24:]
+    test_set = np.concatenate(test_trials, axis=0)
+    train_trials = trials[:-24]
+    # divide train set into 6-min trials
+    train_longer_trials = [np.concatenate(train_trials[i:i+6]) for i in range(0, len(train_trials), 6)]
+    rng = np.random.RandomState(SEED)
+    train_folds = []
+    test_folds = []
+    for i in range(n_folds):
+        # randomly permute the 6-min trials
+        train_longer_trials_perm = rng.permutation(train_longer_trials)
+        train_folds.append(np.concatenate(train_longer_trials_perm))
+        test_folds.append(test_set)
+    return train_folds, test_folds
+
+def prepare_folds_all_views(views, hparas, n_folds, nbtraintrials, SEED, Neetha=False):
     train_folds_views = []
     test_folds_views = []
     for view, hpara in zip(views, hparas):
-        train_folds, test_folds = prepare_folds_per_view(view, n_folds, nbtraintrials, SEED)
+        train_folds, test_folds = prepare_folds_per_view(view, n_folds, nbtraintrials, SEED) if not Neetha else prepare_folds_per_view_Neetha_adaptive(view, n_folds, SEED)
         train_folds_views.append([utils_unsup_single_enc.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in train_folds])
         test_folds_views.append([utils_unsup_single_enc.process_data_per_view(fold, hpara[0], hpara[1], NORMALIZE=True) for fold in test_folds])
     views_train_folds = [folds for folds in zip(*train_folds_views)]
@@ -147,15 +169,20 @@ if not TIMEADAPTIVE:
         if not RANDINIT:
             break
 else:
+    Neetha = False    # dataset == 'Neetha'
     for SEED in args.seeds:
         print(f'#########Seed: {SEED}#########')
         for Subj_ID in Subj_IDs:
             eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-            file_name = f'{table_path}{Subj_ID}_adap_singleenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_ls' if LS else ''}.pkl'
+            if dataset == 'earEEG':
+                eeg_trials = trial_further_split(eeg_trials, 60, fs)
+                att_trials = trial_further_split(att_trials, 60, fs)
+                unatt_trials = trial_further_split(unatt_trials, 60, fs)
+            file_name = f'{table_path}{Subj_ID}_adap_singleenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_ls' if LS else ''}{'_newsplit' if Neetha else ''}.pkl'
             print(f'#########Subject: {Subj_ID}#########')
             nb_correct_folds = []
             nb_trials_folds = []
-            views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, None, SEED)
+            views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_trials, unatt_trials], [(L_data, offset_data), (L_feats, offset_feats), (L_feats, offset_feats)], folds, None, SEED, Neetha=Neetha)
             for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
                 print(f'############Fold: {i}############')
                 _, nb_correct_list, nb_trials_list = utils_unsup_single_enc.recursive(views_train, views_test, fs, track_resolu, compete_resolu, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, LS=LS)

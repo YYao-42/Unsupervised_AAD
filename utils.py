@@ -646,7 +646,7 @@ def get_influence_all_views(data_views_h, weights_views, lag_views, TRAINMODE, T
         rt = data_aggregated.shape[1]//data_trans.shape[1]
         data_rep = np.tile(data_trans, rt)
         corr = np.array([np.corrcoef(data_rep[:, i], data_aggregated[:, i])[0, 1] for i in range(data_rep.shape[1])])
-        influence = np.reshape(np.abs(corr), (rt, -1))
+        influence = np.reshape(corr, (rt, -1)) # np.reshape(np.abs(corr), (rt, -1))
         if aggcomp is not None:
             influence = np.sum(influence[:,:aggcomp], axis=1, keepdims=True)
         if NORMALIZATION:
@@ -1130,7 +1130,10 @@ def prepare_speech_data(Subj_ID, data_folder):
     data_dict = loadmat(file_path, squeeze_me=True)
     labels_att = data_dict['attSpeaker'] # 1 or 2
     labels_unatt = 3 - labels_att
-    eeg_trials = data_dict['eegTrials']
+    if 'earEEG' in data_folder:
+        eeg_trials = [trial[:,:29] for trial in data_dict['eegTrials']]
+    else:
+        eeg_trials = data_dict['eegTrials']
     nb_trials = len(eeg_trials)
     eeg_trials = [eeg_trials[i] for i in range(nb_trials)]
     audio_trials = data_dict['audioTrials']
