@@ -82,6 +82,20 @@ class MCCA_LW(_BaseModel):
         self.weights_ = utils.W_organize(np.real(W), views)
         self.n_views_ = len(views)
         return self
+    
+    def fit_R_2view(self, Rxx, dimv1):
+        Dxx = np.zeros_like(Rxx)
+        Dxx[:dimv1, :dimv1] = Rxx[:dimv1, :dimv1]
+        Dxx[dimv1:, dimv1:] = Rxx[dimv1:, dimv1:]
+        self.Rxx = Rxx
+        self.Dxx = Dxx
+        lam, W = eigh(Dxx, Rxx, subset_by_index=[0,self.latent_dimensions-1]) # automatically ascend
+        Lam = np.diag(lam)
+        # Right scaling
+        W = W @ sqrtm(LA.inv(Lam.T @ W.T @ Rxx @ W @ Lam))
+        self.weights_ = [W[:dimv1,:], W[dimv1:,:]]
+        self.n_views_ = 2
+        return self
 
 
 class CorrCA_LW(_BaseModel):

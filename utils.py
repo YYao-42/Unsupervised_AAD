@@ -109,12 +109,18 @@ def stack_modal(modal_nested_list):
     return stacked_list, dim_list
 
 
-def get_cov_mtx(X, dim_list, regularization=None):
+def get_cov_mtx(X, dim_list=None, regularization=None):
     '''
     Get the covariance matrix of X (T x dimX) with or without regularization
     dim_ilst is a list of dimensions of each modality (data from different subjects can also be viewed as different modalities)
     sum(dim_list) = dimX
     '''
+    # check if X is a list 
+    if isinstance(X, list):
+        dim_list = [data.shape[1] for data in X]
+        X = np.concatenate(tuple(X), axis=1)
+    else:
+        assert dim_list is not None, 'dim_list must be provided if X is not a list'
     Rxx = np.cov(X, rowvar=False)
     Dxx = np.zeros_like(Rxx)
     dim_accumu = 0

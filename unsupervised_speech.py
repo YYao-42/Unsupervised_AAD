@@ -73,8 +73,10 @@ argparser.add_argument('--randinit', action='store_true', default=False, help='S
 argparser.add_argument('--twoenc', action='store_true', default=False, help='Whether to use two encoders for the svad task')
 argparser.add_argument('--unbiased', action='store_true', default=False, help='Use the unbiased version')
 argparser.add_argument('--switch', action='store_true', default=False, help='Switch to single-enc mode after convergence')
-argparser.add_argument('--timeadaptive', action='store_true', default=False, help='Use time-adaptive version')
-argparser.add_argument('--weightpara', type=float, nargs='+', default=[0.9, 0.9], help='alpha and beta for the time-adaptive version')
+argparser.add_argument('--recursive', action='store_true', default=False, help='Use time-adaptive version (recursive implementation)')
+argparser.add_argument('--weightpara', type=float, nargs='+', help='alpha and beta for the time-adaptive version')
+argparser.add_argument('--slidingwin', action='store_true', default=False, help='Use time-adaptive version (sliding window implementation)')
+argparser.add_argument('--poolsize', type=int, help='Pool size for the sliding window implementation')
 args = argparser.parse_args()
 
 dataset = args.dataset
@@ -112,11 +114,12 @@ RANDINIT = args.randinit
 TWOENC = args.twoenc
 UNBIASED = args.unbiased
 SWITCH = args.switch
-TIMEADAPTIVE = args.timeadaptive
+TIMEADAPTIVE = args.recursive or args.slidingwin
 L_data, offset_data = hparadata
 L_feats, offset_feats = hparafeats
 evalpara = args.evalpara
 weightpara = args.weightpara
+pool_size = args.poolsize
 params_hankel = [(L_data, offset_data), (L_feats, offset_feats)]
 latent_dimensions = 5
 table_path = f'tables/{dataset}/recursive/' if TIMEADAPTIVE else f'tables/{dataset}/'
@@ -180,19 +183,22 @@ else:
         print(f'#########Seed: {SEED}#########')
         for Subj_ID in Subj_IDs:
             eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-            if dataset == 'earEEG':
-                eeg_trials = trial_further_split(eeg_trials, 60, fs)
-                att_trials = trial_further_split(att_trials, 60, fs)
-                unatt_trials = trial_further_split(unatt_trials, 60, fs)
+            # if dataset == 'earEEG':
+            #     eeg_trials = trial_further_split(eeg_trials, 60, fs)
+            #     att_trials = trial_further_split(att_trials, 60, fs)
+            #     unatt_trials = trial_further_split(unatt_trials, 60, fs)
             att_unatt_trials = [np.stack([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)]
-            file_name = f'{table_path}{Subj_ID}_adap_twoenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}_weightpara{str(weightpara)}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}{'_newsplit' if Neetha else ''}.pkl'
+            file_name = f'{table_path}{Subj_ID}_{'adap' if args.recursive else 'slidingwin'}_twoenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}{('_weightpara'+str(weightpara)) if weightpara is not None else ''}{('_poolsize'+str(pool_size)) if pool_size is not None else ''}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}{'_newsplit' if Neetha else ''}.pkl'
             print(f'#########Subject: {Subj_ID}#########')
             nb_correct_folds = []
             nb_trials_folds = []
             views_train_folds, views_test_folds = prepare_folds_all_views([eeg_trials, att_unatt_trials], [(L_data, offset_data), (L_feats, offset_feats)], folds, None, SEED, Neetha=Neetha)
             for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
                 print(f'############Fold: {i}############')
-                _, nb_correct_list, nb_trials_list = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                if args.recursive:
+                    _, nb_correct_list, nb_trials_list = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                else:
+                    _, nb_correct_list, nb_trials_list = utils_unsup.sliding_window(views_train, views_test, fs, pool_size, track_resolu, compete_resolu, L_feats, SEED, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
                 nb_correct_folds.append(np.array(nb_correct_list))
                 nb_trials_folds.append(np.array(nb_trials_list))
             nb_correct = np.stack(nb_correct_folds, axis=0)

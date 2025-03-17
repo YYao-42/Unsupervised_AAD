@@ -125,6 +125,17 @@ def train_cca_model_adaptive(views_train, Rinit, Dinit, latent_dimensions=5, wei
     return best_model
 
 
+def train_cca_model_pool(pool_tensor, dims_hankel, latent_dimensions=5, RANDMODEL=False, SEED=None):
+    dim_keep = dims_hankel[0] + dims_hankel[1]
+    Rxx_avg = np.mean(pool_tensor, axis=2)[:dim_keep,:dim_keep]
+    best_model = MCCA_LW(latent_dimensions=latent_dimensions)
+    best_model.fit_R_2view(Rxx_avg, dims_hankel[0])
+    if RANDMODEL:
+        assert SEED is not None, 'SEED must be provided for random initialization'
+        best_model = get_rand_model(best_model, SEED)
+    return best_model
+
+
 def get_corr_pair(seg_views, model, evalpara=[3, 2]):
     data, feats_att, feats_unatt = seg_views
     corr_att = model.average_pairwise_correlations([data, feats_att])
@@ -355,4 +366,82 @@ def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu,
     nb_correct_list.append(nb_correct)
     nb_trials_list.append(nb_trials)
     return labels, nb_correct_list, nb_trials_list
+
+
+def get_cov_tensor(segs_views, regularization='lwcov'):
+    cov_matrices = [utils.get_cov_mtx(views, regularization=regularization)[0] for views in segs_views]
+    cov_tensor = np.stack(cov_matrices, axis=2)
+    return cov_tensor
+
+
+def change_cov_mtx(cov_mtx, dims_hankel):
+    assert np.sum(dims_hankel) == cov_mtx.shape[0], 'The sum of dims_hankel must be equal to the number of rows in the covariance matrix'
+    cum_dims = np.cumsum(dims_hankel)
+    cov_mtx_pcol = cov_mtx.copy()
+    cov_mtx_pcol[:, cum_dims[1]:] = cov_mtx[:, cum_dims[0]:cum_dims[1]]
+    cov_mtx_pcol[:, cum_dims[0]:cum_dims[1]] = cov_mtx[:, cum_dims[1]:]
+    cov_mtx_new = cov_mtx_pcol.copy()
+    cov_mtx_new[cum_dims[1]:, :] = cov_mtx_pcol[cum_dims[0]:cum_dims[1], :]
+    cov_mtx_new[cum_dims[0]:cum_dims[1], :] = cov_mtx_pcol[cum_dims[1]:, :]
+    return cov_mtx_new
+
+
+def update_pool(pool_tensor, dims_hankel, weights, evalpara):
+    cum_dims = np.cumsum(dims_hankel)
+    label_pool = []
+    for i in range(pool_tensor.shape[-1]):
+        Rxx = pool_tensor[:cum_dims[0], :cum_dims[0], i]
+        R11 = pool_tensor[cum_dims[0]:cum_dims[1], cum_dims[0]:cum_dims[1], i]
+        R22 = pool_tensor[cum_dims[1]:, cum_dims[1]:, i]
+        Rx1 = pool_tensor[:cum_dims[0], cum_dims[0]:cum_dims[1], i]
+        Rx2 = pool_tensor[:cum_dims[0], cum_dims[1]:, i]
+        wx, w12= weights
+        range_into_account, nb_comp_into_account = evalpara
+        corr_x1 = np.diag(wx.T @ Rx1 @ w12)/np.sqrt(np.diag(wx.T @ Rxx @ wx) * np.diag(w12.T @ R11 @ w12))
+        corr_x2 = np.diag(wx.T @ Rx2 @ w12)/np.sqrt(np.diag(wx.T @ Rxx @ wx) * np.diag(w12.T @ R22 @ w12))
+        corr_x1 = np.sort(corr_x1[:range_into_account])[::-1]
+        corr_x2 = np.sort(corr_x2[:range_into_account])[::-1]
+        corr_sum_x1 = np.sum(corr_x1[:nb_comp_into_account])
+        corr_sum_x2 = np.sum(corr_x2[:nb_comp_into_account])
+        if i == 0:
+            print(f'corr_sum_x1: {corr_sum_x1}, corr_sum_x2: {corr_sum_x2}')
+        if corr_sum_x1 < corr_sum_x2:
+            pool_tensor[:, :, i] = change_cov_mtx(pool_tensor[:, :, i], dims_hankel)
+            label_pool.append(False)
+        else:
+            label_pool.append(True)
+    return pool_tensor, label_pool
+
+
+def sliding_window(views_train_ori, views_test_ori, fs, pool_size, track_resolu, compete_resolu, SEED, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False):
+    views_train = copy.deepcopy(views_train_ori)
+    views_test = copy.deepcopy(views_test_ori)
+    dim_hankel = [view.shape[1] for view in views_train]
+    views_in_segs_train = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
+    nb_views = len(views_in_segs_train)
+    nb_segs_train = len(views_in_segs_train[0])
+    segs_views_train = [[views_in_segs_train[i][j] for i in range(nb_views)] for j in range(nb_segs_train)]
+    cov_tensor_precomputed = get_cov_tensor(segs_views_train, regularization='lwcov')
+    pool_init = np.zeros((cov_tensor_precomputed.shape[0], cov_tensor_precomputed.shape[1], pool_size))
+    pool_init[:,:,-1] = cov_tensor_precomputed[:,:,0]
+    model = train_cca_model_pool(pool_init, dim_hankel, latent_dimensions=latent_dimensions, RANDMODEL=True, SEED=SEED)
+    labels_pool = []
+    nb_correct_list = []
+    nb_trials_list = []
+    for i in range(nb_segs_train):
+        nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
+        nb_correct_list.append(nb_correct)
+        nb_trials_list.append(nb_trials)
+        # Move to the next segment, predict the labels, and update the pool
+        pool_tensor = np.zeros_like(pool_init)
+        pool_tensor[:, :, 1:] = pool_init[:, :, :-1]
+        pool_tensor[:, :, 0] = cov_tensor_precomputed[:, :, i]
+        pool_init = pool_tensor
+        pool_tensor, label_pool = update_pool(pool_tensor, dim_hankel, model.weights_, evalpara)
+        labels_pool.append(label_pool)
+        model = train_cca_model_pool(pool_tensor, dim_hankel, latent_dimensions=latent_dimensions, RANDMODEL=False, SEED=SEED)
+    nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
+    nb_correct_list.append(nb_correct)
+    nb_trials_list.append(nb_trials)
+    return labels_pool, nb_correct_list, nb_trials_list
 
