@@ -77,6 +77,7 @@ argparser.add_argument('--recursive', action='store_true', default=False, help='
 argparser.add_argument('--weightpara', type=float, nargs='+', help='alpha and beta for the time-adaptive version')
 argparser.add_argument('--slidingwin', action='store_true', default=False, help='Use time-adaptive version (sliding window implementation)')
 argparser.add_argument('--poolsize', type=int, help='Pool size for the sliding window implementation')
+argparser.add_argument('--initwtrainedmodel', action='store_true', default=False, help='Initialize the model with a trained model')
 args = argparser.parse_args()
 
 dataset = args.dataset
@@ -181,14 +182,18 @@ else:
     Neetha = False   # dataset == 'Neetha'
     for SEED in args.seeds:
         print(f'#########Seed: {SEED}#########')
+        model_init_folds = [None] * folds
+        Rinit_folds = [None] * folds
+        Dinit_folds = [None] * folds
+        pool_init_folds = [None] * folds
         for Subj_ID in Subj_IDs:
             eeg_trials, att_trials, unatt_trials = utils.prepare_speech_data(Subj_ID, data_folder)
-            # if dataset == 'earEEG':
-            #     eeg_trials = trial_further_split(eeg_trials, 60, fs)
-            #     att_trials = trial_further_split(att_trials, 60, fs)
-            #     unatt_trials = trial_further_split(unatt_trials, 60, fs)
+            if dataset == 'earEEG':
+                eeg_trials = trial_further_split(eeg_trials, 60, fs)
+                att_trials = trial_further_split(att_trials, 60, fs)
+                unatt_trials = trial_further_split(unatt_trials, 60, fs)
             att_unatt_trials = [np.stack([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)]
-            file_name = f'{table_path}{Subj_ID}_{'adap' if args.recursive else 'slidingwin'}_twoenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}{('_weightpara'+str(weightpara)) if weightpara is not None else ''}{('_poolsize'+str(pool_size)) if pool_size is not None else ''}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}{'_newsplit' if Neetha else ''}.pkl'
+            file_name = f'{table_path}{Subj_ID}_{'adap' if args.recursive else 'slidingwin'}_twoenc_folds{folds}_hankel{str(params_hankel)}_eval{str(evalpara)}{('_weightpara'+str(weightpara)) if weightpara is not None else ''}{('_poolsize'+str(pool_size)) if pool_size is not None else ''}{'_track_resolu'+str(track_resolu) if args.track_resolu is not None else ''}_compete_resolu{compete_resolu}_seed{SEED}{'_bootstrap' if BOOTSTRAP else ''}{'_twoenc' if TWOENC else ''}{'_newsplit' if Neetha else ''}{'_initwtrained' if args.initwtrainedmodel else ''}.pkl'
             print(f'#########Subject: {Subj_ID}#########')
             nb_correct_folds = []
             nb_trials_folds = []
@@ -196,9 +201,16 @@ else:
             for i, (views_train, views_test) in enumerate(zip(views_train_folds, views_test_folds)):
                 print(f'############Fold: {i}############')
                 if args.recursive:
-                    _, nb_correct_list, nb_trials_list = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                    _, nb_correct_list, nb_trials_list, model, Rxx, Dxx = utils_unsup.recursive(views_train, views_test, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=latent_dimensions, weightpara=weightpara, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, model_init=model_init_folds[i], Rinit=Rinit_folds[i], Dinit=Dinit_folds[i])
+                    if args.initwtrainedmodel:
+                        model_init_folds[i] = model
+                        Rinit_folds[i] = Rxx
+                        Dinit_folds[i] = Dxx
                 else:
-                    _, nb_correct_list, nb_trials_list = utils_unsup.sliding_window(views_train, views_test, fs, pool_size, track_resolu, compete_resolu, L_feats, SEED, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP)
+                    _, nb_correct_list, nb_trials_list, model, pool_tensor = utils_unsup.sliding_window(views_train, views_test, fs, pool_size, track_resolu, compete_resolu, L_feats, SEED, latent_dimensions=latent_dimensions, evalpara=evalpara, BOOTSTRAP=BOOTSTRAP, model_init=model_init_folds[i], pool_init=pool_init_folds[i])
+                    if args.initwtrainedmodel:
+                        model_init_folds[i] = model
+                        pool_init_folds[i] = pool_tensor
                 nb_correct_folds.append(np.array(nb_correct_list))
                 nb_trials_folds.append(np.array(nb_trials_list))
             nb_correct = np.stack(nb_correct_folds, axis=0)

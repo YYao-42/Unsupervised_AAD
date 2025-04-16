@@ -420,18 +420,22 @@ def iterate_switch(views_train_ori, views_val_ori, views_test_ori, fs, track_res
     return corr_sum_att_list, corr_sum_unatt_list, nb_correct_train_list, nb_trials_train_list, nb_correct_list, nb_trials_list
 
 
-def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=5, weightpara=[0.0, 0.0], evalpara=[3, 2], CROSSVIEW=True, BOOTSTRAP=False, MIXPAIR=False):
-    T_track = fs*track_resolu
+def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu, L_data, L_feats, SEED, latent_dimensions=5, weightpara=[0.0, 0.0], evalpara=[3, 2], CROSSVIEW=True, BOOTSTRAP=False, MIXPAIR=False, model_init=None, Rinit=None, Dinit=None):
     views_train = copy.deepcopy(views_train_ori)
     views_test = copy.deepcopy(views_test_ori)
     views_in_segs_train = [get_segments(view, fs, track_resolu, MIXPAIR=MIXPAIR) for view in views_train]
     nb_views = len(views_in_segs_train)
     nb_segs_train = len(views_in_segs_train[0])
     segs_views_train = [[views_in_segs_train[i][j] for i in range(nb_views)] for j in range(nb_segs_train)]
-    # generate a random encoder and decoder
-    model = train_cca_model_adaptive(segs_views_train[0], None, None, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=SEED)
-    Rinit = None
-    Dinit = None
+    if model_init is not None:
+        model = model_init
+        Rinit = Rinit
+        Dinit = Dinit
+    else:
+        # generate a random encoder and decoder
+        model = train_cca_model_adaptive(segs_views_train[0], None, None, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=SEED)
+        Rinit = None
+        Dinit = None
     labels = []
     nb_correct_list = []
     nb_trials_list = []
@@ -456,11 +460,12 @@ def recursive(views_train_ori, views_test_ori, fs, track_resolu, compete_resolu,
         model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED)
         Rinit = model.Rxx
         Dinit = model.Dxx
+    model_twoenc = copy.deepcopy(model)
     model.weights_[1] = model.weights_[1][:L_feats, :]
     nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
     nb_correct_list.append(nb_correct)
     nb_trials_list.append(nb_trials)
-    return labels, nb_correct_list, nb_trials_list
+    return labels, nb_correct_list, nb_trials_list, model_twoenc, Rinit, Dinit
 
 
 def get_cov_tensor(segs_views, regularization='lwcov'):
@@ -513,7 +518,7 @@ def update_pool(pool_tensor, dims_hankel, weights, evalpara):
     return pool_tensor, label_pool
 
 
-def sliding_window(views_train_ori, views_test_ori, fs, pool_size, track_resolu, compete_resolu, L_feats, SEED, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False):
+def sliding_window(views_train_ori, views_test_ori, fs, pool_size, track_resolu, compete_resolu, L_feats, SEED, latent_dimensions=5, evalpara=[3, 2], BOOTSTRAP=False, MIXPAIR=False, model_init=None, pool_init=None):
     views_train = copy.deepcopy(views_train_ori)
     views_test = copy.deepcopy(views_test_ori)
     dim_hankel = [view.shape[1] for view in views_train]
@@ -522,9 +527,13 @@ def sliding_window(views_train_ori, views_test_ori, fs, pool_size, track_resolu,
     nb_segs_train = len(views_in_segs_train[0])
     segs_views_train = [[views_in_segs_train[i][j] for i in range(nb_views)] for j in range(nb_segs_train)]
     cov_tensor_precomputed = get_cov_tensor(segs_views_train, regularization='lwcov')
-    pool_init = np.zeros((cov_tensor_precomputed.shape[0], cov_tensor_precomputed.shape[1], pool_size))
-    pool_init[:,:,-1] = cov_tensor_precomputed[:,:,0]
-    model = train_cca_model_pool(pool_init, dim_hankel[0], latent_dimensions=latent_dimensions, RANDMODEL=True, SEED=SEED)
+    if model_init is not None:
+        model = model_init
+        pool_init = pool_init
+    else:
+        pool_init = np.zeros((cov_tensor_precomputed.shape[0], cov_tensor_precomputed.shape[1], pool_size))
+        pool_init[:,:,-1] = cov_tensor_precomputed[:,:,0]
+        model = train_cca_model_pool(pool_init, dim_hankel[0], latent_dimensions=latent_dimensions, RANDMODEL=True, SEED=SEED)
     labels_pool = []
     nb_correct_list = []
     nb_trials_list = []
@@ -543,9 +552,10 @@ def sliding_window(views_train_ori, views_test_ori, fs, pool_size, track_resolu,
         pool_tensor, label_pool = update_pool(pool_tensor, dim_hankel, weights, evalpara)
         labels_pool.append(label_pool)
         model = train_cca_model_pool(pool_tensor, dim_hankel[0], latent_dimensions=latent_dimensions, RANDMODEL=False, SEED=SEED)
+    model_twoenc = copy.deepcopy(model)
     model.weights_[1] = model.weights_[1][:L_feats, :]
     nb_correct, nb_trials = svad(views_test, model, fs, compete_resolu, BOOTSTRAP=BOOTSTRAP, MIXPAIR=MIXPAIR, evalpara=evalpara)
     nb_correct_list.append(nb_correct)
     nb_trials_list.append(nb_trials)
-    return labels_pool, nb_correct_list, nb_trials_list
+    return labels_pool, nb_correct_list, nb_trials_list, model_twoenc, pool_init
 
