@@ -98,7 +98,7 @@ def sliding_multi_sessions(data_conditions_dict, att_conditions_dict, unatt_cond
             model_init = model
     return pred_labels
 
-def calc_smooth_acc(pred_labels, nearby=14):
+def calc_smooth_acc(pred_labels, nb_trials, nearby=14):
     labels_non_calib = pred_labels[2*nb_trials:]
     labels_non_calib = [item for sublist in labels_non_calib for item in sublist]
     acc_non_calib = np.sum(labels_non_calib)/len(labels_non_calib)
@@ -139,10 +139,10 @@ fig_path = f'figures/Zink/Single-Enc/'
 utils.create_dir(fig_path, CLEAR=False)
 
 data_path = '../../Experiments/data/Zink/dataSubjectOfficial{}.mat'.format(args.Subj_ID)
-data = scipy.io.loadmat(data_path, squeeze_me=True)
-conditions = data['condition']
-unique_conditions = np.unique(conditions)
 for SEED in args.seeds:
+    data = scipy.io.loadmat(data_path, squeeze_me=True)
+    conditions = data['condition']
+    unique_conditions = np.unique(conditions)
     data_conditions_dict = {}
     att_conditions_dict = {}
     unatt_conditions_dict = {}
@@ -153,7 +153,7 @@ for SEED in args.seeds:
         if nb_disconnected > 0:
             disconnected_channels = rng.choice(data_conditions_dict[cond][0].shape[1], nb_disconnected, replace=False)
             for i in range(len(data_conditions_dict[cond])):
-                data_conditions_dict[cond][i][:, disconnected_channels] = np.mean(data_conditions_dict[cond][i], axis=1, keepdims=True)
+                data_conditions_dict[cond][i][:, disconnected_channels] = 0
         data_conditions_dict[cond] = [utils_unsup_single_enc.process_data_per_view(d, hparadata[0], hparadata[1], NORMALIZE=True) for d in data_conditions_dict[cond]]
         att_conditions_dict[cond], unatt_conditions_dict[cond] = select_att_unatt_feats(data['audioTrials'][conditions == cond], data['attSpeaker'][conditions == cond])
         att_conditions_dict[cond] = [utils_unsup_single_enc.process_data_per_view(d, hparafeats[0], hparafeats[1], NORMALIZE=True) for d in att_conditions_dict[cond]]
@@ -161,11 +161,11 @@ for SEED in args.seeds:
         
     print(f"##################Recursive, SEED{SEED}##################")
     pred_labels_recur = recursive_multi_sessions(data_conditions_dict, att_conditions_dict, unatt_conditions_dict, latent_dimensions, weightpara, SEED, evalpara, PARATRANS=PARATRANS, nb_trials=nb_trials)
-    _, acc_recur = calc_smooth_acc(pred_labels_recur)
+    _, acc_recur = calc_smooth_acc(pred_labels_recur, nb_trials)
 
     print(f"##################Sliding, SEED{SEED}##################")
     pred_labels_slid = sliding_multi_sessions(data_conditions_dict, att_conditions_dict, unatt_conditions_dict, latent_dimensions, pool_size, SEED, evalpara, PARATRANS=PARATRANS, nb_trials=nb_trials)
-    _, acc_slid = calc_smooth_acc(pred_labels_slid)
+    _, acc_slid = calc_smooth_acc(pred_labels_slid, nb_trials)
 
     file_name = f"{table_path}{args.Subj_ID}_SEED{SEED}_nbdisconnected{nb_disconnected}_nbtrials{nb_trials}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_weightpara{weightpara[0]}_{weightpara[1]}_poolsize{pool_size}_PARATRANS{PARATRANS}.pkl"
     res_labels = {'recur': pred_labels_recur, 'slid': pred_labels_slid}
