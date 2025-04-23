@@ -1,6 +1,7 @@
 /__pycache__/
 scratch**
 /tables**/
+/legacy/
 /figures**/
 /.vscode/
 /data/
