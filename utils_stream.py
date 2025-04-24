@@ -131,108 +131,6 @@ def predict_labels_single_enc(views, model, evalpara):
     return pred_label
 
 
-def fixed_supervised(data_conditions_dict, feats_conditions_dict, labels_conditions_dict, latent_dimensions, evalpara, nb_trials, UPDATE_STEP=2):
-    # Train (single-enc) model with calibration sessions
-    # and predict labels for test sessions
-    calib_data = data_conditions_dict['CS-1'] + data_conditions_dict['CS-2']
-    calib_feats = feats_conditions_dict['CS-1'] + feats_conditions_dict['CS-2']
-    calib_labels = labels_conditions_dict['CS-1'] + labels_conditions_dict['CS-2']
-    calib_att, _ = select_att_unatt_feats(calib_feats, calib_labels)
-    train_data = np.concatenate(calib_data, axis=0)
-    train_feats = np.concatenate(calib_att, axis=0)
-    model = train_cca_model([train_data, train_feats], latent_dimensions=latent_dimensions)
-    pred_labels_dict = {}
-    for cond in ['TS-1', 'TS-2', 'TS-3', 'TS-4', 'FUS-1', 'FUS-2']:
-        pred_labels = []
-        segs_views = [[data, feats] for data, feats in zip(data_conditions_dict[cond], feats_conditions_dict[cond])]
-        for i in range(nb_trials*UPDATE_STEP):
-            pred_labels.append(predict_labels_single_enc(segs_views[i], model, evalpara))
-        pred_labels_dict[cond] = pred_labels
-    return pred_labels_dict
-
-
-def adaptive_supervised(data_conditions_dict, feats_conditions_dict, labels_conditions_dict, L_data, L_feats, latent_dimensions, weightpara, SEED, evalpara, nb_trials, UPDATE_STEP=2, PARATRANS=False, SINGLEENC=False):
-    # Adaptive training with known labels
-    model_init = None
-    pred_labels_dict = {}
-    for cond in ['CS-1', 'CS-2', 'TS-1', 'TS-2', 'TS-3', 'TS-4', 'FUS-1', 'FUS-2']:
-        pred_labels = []
-        segs_views = [[data, feats] for data, feats in zip(data_conditions_dict[cond], feats_conditions_dict[cond])]
-        if model_init is not None:
-            model = model_init
-            Rinit = Rinit
-            Dinit = Dinit
-        else:
-            model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=SEED, SINGLEENC=SINGLEENC)
-            Rinit = None 
-            Dinit = None
-        for k in range(UPDATE_STEP):
-            pred_labels.append(predict_labels_single_enc(segs_views[k], model, evalpara) if SINGLEENC else predict_labels(segs_views[k], model, L_data, L_feats, evalpara, NEWSEG=True))
-        for i in range(0, nb_trials*UPDATE_STEP, UPDATE_STEP):
-            data_segs = []
-            feats_segs = []
-            label_segs = []
-            for k in range(UPDATE_STEP):
-                data_segs.append(segs_views[i+k][0])
-                feats_segs.append(segs_views[i+k][1])
-                label_segs.append(labels_conditions_dict[cond][i+k])
-            att_segs, unatt_segs = select_att_unatt_feats(feats_segs, label_segs)
-            att_unatt_segs = [np.concatenate((att, unatt), axis=1) for att, unatt in zip(att_segs, unatt_segs)]
-            seg_train = [np.concatenate(data_segs, axis=0), np.concatenate(att_unatt_segs, axis=0)]
-            model = train_cca_model_adaptive(seg_train, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED, SINGLEENC=SINGLEENC)
-            Rinit = model.Rxx 
-            Dinit = model.Dxx
-            if i < (nb_trials - 1) * UPDATE_STEP:
-                for k in range(UPDATE_STEP):
-                    # predict labels of the next trials
-                    pred_labels.append(predict_labels_single_enc(segs_views[i+UPDATE_STEP+k], model, evalpara) if SINGLEENC else predict_labels(segs_views[i+UPDATE_STEP+k], model, L_data, L_feats, evalpara, NEWSEG=True))
-        pred_labels_dict[cond] = pred_labels
-        if PARATRANS:
-            model_init = model
-    return pred_labels_dict
-
-
-def recursive_multi_sessions(data_conditions_dict, feats_conditions_dict, L_data, L_feats, latent_dimensions, weightpara, SEED, evalpara, nb_trials, UPDATE_STEP=2, PARATRANS=False, SINGLEENC=False):
-    model_init = None
-    pred_labels_dict = {}
-    for cond in ['CS-1', 'CS-2', 'TS-1', 'TS-2', 'TS-3', 'TS-4', 'FUS-1', 'FUS-2']:
-        pred_labels = []
-        segs_views = [[data, feats] for data, feats in zip(data_conditions_dict[cond], feats_conditions_dict[cond])]
-        if model_init is not None:
-            model = model_init
-            Rinit = Rinit
-            Dinit = Dinit
-        else:
-            model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=SEED, SINGLEENC=SINGLEENC)
-            Rinit = None 
-            Dinit = None
-        for k in range(UPDATE_STEP):
-            pred_labels.append(predict_labels_single_enc(segs_views[k], model, evalpara) if SINGLEENC else predict_labels(segs_views[k], model, L_data, L_feats, evalpara, NEWSEG=True))
-        for i in range(0, nb_trials*UPDATE_STEP, UPDATE_STEP):
-            data_segs = []
-            feats_segs = []
-            for k in range(UPDATE_STEP):
-                data_segs.append(segs_views[i+k][0])
-                feats_segs.append(segs_views[i+k][1])
-            seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
-            label = predict_labels_single_enc(seg_to_pred, model, evalpara) if SINGLEENC else predict_labels(seg_to_pred, model, L_data, L_feats, evalpara, NEWSEG=False) 
-            if label == 1:
-                seg_predicted = seg_to_pred
-            else:
-                seg_predicted = [seg_to_pred[0], np.concatenate([seg_to_pred[1][:, L_feats:], seg_to_pred[1][:, :L_feats]], axis=1)]
-            model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=SEED, SINGLEENC=SINGLEENC)
-            Rinit = model.Rxx 
-            Dinit = model.Dxx
-            if i < (nb_trials - 1) * UPDATE_STEP:
-                for k in range(UPDATE_STEP):
-                    # predict labels of the next trials
-                    pred_labels.append(predict_labels_single_enc(segs_views[i+UPDATE_STEP+k], model, evalpara) if SINGLEENC else predict_labels(segs_views[i+UPDATE_STEP+k], model, L_data, L_feats, evalpara, NEWSEG=True))
-        pred_labels_dict[cond] = pred_labels
-        if PARATRANS:
-            model_init = model
-    return pred_labels_dict
-
-
 def calc_smooth_acc(pred_labels, true_labels, nb_trials, UPDATE_STEP, nearby=14):
     if len(pred_labels) != len(true_labels):
         assert len(true_labels) == len(pred_labels) + 2*nb_trials*UPDATE_STEP, "The length of pred_labels and true_labels do not match."
@@ -247,3 +145,119 @@ def calc_smooth_acc(pred_labels, true_labels, nb_trials, UPDATE_STEP, nearby=14)
         idx_range = (max(0, i-nearby), min(len(pred_labels), i+nearby))
         acc.append(np.sum(right[idx_range[0]:idx_range[1]])/len(right[idx_range[0]:idx_range[1]]))
     return acc_non_calib, acc
+
+
+class STREAM:
+    def __init__(self, data_conditions_dict, feats_conditions_dict, L_data, L_feats, latent_dimensions, SEED, evalpara, nb_trials, UPDATE_STEP):
+        self.data_conditions_dict = data_conditions_dict
+        self.feats_conditions_dict = feats_conditions_dict
+        self.L_data = L_data
+        self.L_feats = L_feats
+        self.latent_dimensions = latent_dimensions
+        self.SEED = SEED
+        self.evalpara = evalpara
+        self.nb_trials = nb_trials
+        self.UPDATE_STEP = UPDATE_STEP
+
+    def fixed_supervised(self, labels_conditions_dict, conds_train, conds_test):
+        # Train (single-enc) model with calibration sessions and predict labels for test sessions
+        calib_data = []
+        calib_feats = []
+        calib_labels = []
+        for cond in conds_train:
+            calib_data += self.data_conditions_dict[cond]
+            calib_feats += self.feats_conditions_dict[cond]
+            calib_labels += labels_conditions_dict[cond]
+        calib_att, _ = select_att_unatt_feats(calib_feats, calib_labels)
+        train_data = np.concatenate(calib_data, axis=0)
+        train_feats = np.concatenate(calib_att, axis=0)
+        model = train_cca_model([train_data, train_feats], latent_dimensions=self.latent_dimensions)
+        pred_labels_dict = {}
+        for cond in conds_test:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            for i in range(self.nb_trials*self.UPDATE_STEP):
+                pred_labels.append(predict_labels_single_enc(segs_views[i], model, self.evalpara))
+            pred_labels_dict[cond] = pred_labels
+        return pred_labels_dict
+
+    def adaptive_supervised(self, labels_conditions_dict, weightpara, PARATRANS=True, SINGLEENC=True, conds_sorted=None):
+        # Adaptive training with known labels
+        model_init = None
+        pred_labels_dict = {}
+        conds = labels_conditions_dict.keys() if conds_sorted is None else conds_sorted
+        for cond in conds:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            if model_init is not None:
+                model = model_init
+                Rinit = Rinit
+                Dinit = Dinit
+            else:
+                model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = None 
+                Dinit = None
+            for k in range(self.UPDATE_STEP):
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
+                data_segs = []
+                feats_segs = []
+                label_segs = []
+                for k in range(self.UPDATE_STEP):
+                    data_segs.append(segs_views[i+k][0])
+                    feats_segs.append(segs_views[i+k][1])
+                    label_segs.append(labels_conditions_dict[cond][i+k])
+                att_segs, unatt_segs = select_att_unatt_feats(feats_segs, label_segs)
+                att_unatt_segs = [np.concatenate((att, unatt), axis=1) for att, unatt in zip(att_segs, unatt_segs)]
+                seg_train = [np.concatenate(data_segs, axis=0), np.concatenate(att_unatt_segs, axis=0)]
+                model = train_cca_model_adaptive(seg_train, Rinit, Dinit, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = model.Rxx 
+                Dinit = model.Dxx
+                if i < (self.nb_trials - 1) * self.UPDATE_STEP:
+                    for k in range(self.UPDATE_STEP):
+                        # predict labels of the next trials
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            pred_labels_dict[cond] = pred_labels
+            if PARATRANS:
+                model_init = model
+        return pred_labels_dict
+
+    def recursive(self, weightpara, PARATRANS=True, SINGLEENC=True):
+        model_init = None
+        pred_labels_dict = {}
+        for cond in ['CS-1', 'CS-2', 'TS-1', 'TS-2', 'TS-3', 'TS-4', 'FUS-1', 'FUS-2']:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            if model_init is not None:
+                model = model_init
+                Rinit = Rinit
+                Dinit = Dinit
+            else:
+                model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = None 
+                Dinit = None
+            for k in range(self.UPDATE_STEP):
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
+                data_segs = []
+                feats_segs = []
+                for k in range(self.UPDATE_STEP):
+                    data_segs.append(segs_views[i+k][0])
+                    feats_segs.append(segs_views[i+k][1])
+                seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
+                label = predict_labels_single_enc(seg_to_pred, model, self.evalpara) if SINGLEENC else predict_labels(seg_to_pred, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=False) 
+                if label == 1:
+                    seg_predicted = seg_to_pred
+                else:
+                    seg_predicted = [seg_to_pred[0], np.concatenate([seg_to_pred[1][:, self.L_feats:], seg_to_pred[1][:, :self.L_feats]], axis=1)]
+                model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = model.Rxx 
+                Dinit = model.Dxx
+                if i < (self.nb_trials - 1) * self.UPDATE_STEP:
+                    for k in range(self.UPDATE_STEP):
+                        # predict labels of the next trials
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            pred_labels_dict[cond] = pred_labels
+            if PARATRANS:
+                model_init = model
+        return pred_labels_dict
