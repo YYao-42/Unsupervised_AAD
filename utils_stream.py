@@ -5,7 +5,7 @@ from algo_suppl import MCCA_LW
 from itertools import product
 
 
-def further_split_and_shuffle(data_trials, feats_trials, labels_trials, sub_trial_length, fs, SEED, SHUFFLE=True):
+def further_split_and_shuffle(data_trials, feats_trials, labels_trials, sub_trial_length, fs, SHUFFLE=False, SEED=None):
     """
     Further split the data into smaller chunks and shuffle them.
     """
@@ -57,10 +57,11 @@ def select_att_unatt_feats(feats_trials, label_trials):
     unatt_trials = []
     for i in range(nb_trials):
         feats = feats_trials[i]
-        att = feats[:, label_trials[i]-1]
-        unatt = feats[:, 2-label_trials[i]]
-        att_trials.append(np.expand_dims(att, axis=1))
-        unatt_trials.append(np.expand_dims(unatt, axis=1))
+        dim_hankel = feats.shape[1]//2
+        att = feats[:, (label_trials[i]-1)*dim_hankel:label_trials[i]*dim_hankel]
+        unatt = feats[:, (2-label_trials[i])*dim_hankel:(3-label_trials[i])*dim_hankel]
+        att_trials.append(np.expand_dims(att, axis=1) if len(att.shape) == 1 else att)
+        unatt_trials.append(np.expand_dims(unatt, axis=1) if len(unatt.shape) == 1 else unatt)
     return att_trials, unatt_trials
 
 
@@ -131,14 +132,14 @@ def predict_labels_single_enc(views, model, evalpara):
     return pred_label
 
 
-def calc_smooth_acc(pred_labels, true_labels, nb_trials, UPDATE_STEP, nearby=14):
+def calc_smooth_acc(pred_labels, true_labels, nb_trials, UPDATE_STEP, nearby=14, nb_calibsessions=2):
     if len(pred_labels) != len(true_labels):
-        assert len(true_labels) == len(pred_labels) + 2*nb_trials*UPDATE_STEP, "The length of pred_labels and true_labels do not match."
-        right = pred_labels == true_labels[2*nb_trials*UPDATE_STEP:]
+        assert len(true_labels) == len(pred_labels) + nb_calibsessions*nb_trials*UPDATE_STEP, "The length of pred_labels and true_labels do not match."
+        right = pred_labels == true_labels[nb_calibsessions*nb_trials*UPDATE_STEP:]
         acc_non_calib = np.sum(right)/len(right)
     else:
         right = pred_labels == true_labels
-        acc_non_calib = np.sum(right[2*nb_trials*UPDATE_STEP:])/len(right[2*nb_trials*UPDATE_STEP:])
+        acc_non_calib = np.sum(right[nb_calibsessions*nb_trials*UPDATE_STEP:])/len(right[nb_calibsessions*nb_trials*UPDATE_STEP:])
     print("Avg acc non-calib: ", acc_non_calib)
     acc = []
     for i in range(len(pred_labels)):
@@ -222,10 +223,11 @@ class STREAM:
                 model_init = model
         return pred_labels_dict
 
-    def recursive(self, weightpara, PARATRANS=True, SINGLEENC=True):
+    def recursive(self, weightpara, PARATRANS=True, SINGLEENC=True, conds_sorted=None):
         model_init = None
         pred_labels_dict = {}
-        for cond in ['CS-1', 'CS-2', 'TS-1', 'TS-2', 'TS-3', 'TS-4', 'FUS-1', 'FUS-2']:
+        conds = self.data_conditions_dict.keys() if conds_sorted is None else conds_sorted
+        for cond in conds:
             pred_labels = []
             segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
             if model_init is not None:
