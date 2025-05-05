@@ -1,4 +1,5 @@
 import utils
+import utils_prob
 import numpy as np
 import copy
 from algo_suppl import MCCA_LW
@@ -35,6 +36,27 @@ def further_split_and_shuffle(data_trials, feats_trials, labels_trials, sub_tria
         return data_shuffled, feats_shuffled, labels_shuffled
     else:
         return data, feats, labels
+
+
+def change_order_of_trials(data_trials, feats_trials, labels_trials):
+    # divide trials into two groups based on labels
+    data_1 = [data for data, label in zip(data_trials, labels_trials) if label == 1]
+    data_2 = [data for data, label in zip(data_trials, labels_trials) if label == 2]
+    assert len(data_1) == len(data_2), "The number of trials in data_1 and data_2 should be equal."
+    feats_1 = [feats for feats, label in zip(feats_trials, labels_trials) if label == 1]
+    feats_2 = [feats for feats, label in zip(feats_trials, labels_trials) if label == 2]
+    # make sure that one trials in data_1 is followed by one trial in data_2
+    data_trials_ordered = []
+    feats_trials_ordered = []
+    labels_trials_ordered = []
+    for i in range(len(data_1)):
+        data_trials_ordered.append(data_1[i])
+        feats_trials_ordered.append(feats_1[i])
+        labels_trials_ordered.append(1)
+        data_trials_ordered.append(data_2[i])
+        feats_trials_ordered.append(feats_2[i])
+        labels_trials_ordered.append(2)
+    return data_trials_ordered, feats_trials_ordered, labels_trials_ordered
 
 
 def process_data_per_view(view, L, offset, NORMALIZE=True):
@@ -132,14 +154,29 @@ def predict_labels_single_enc(views, model, evalpara):
     return pred_label
 
 
-def calc_smooth_acc(pred_labels, true_labels, nb_trials, UPDATE_STEP, nearby=14, nb_calibsessions=2):
+def predict_labels_soft(views, model, gmm_0, gmm_1, evalpara):
+    data, feats = views
+    f1, f2 = get_feats_per_stream(feats)
+    corr_1 = model.average_pairwise_correlations([data, f1])
+    corr_sum_1 = cal_corr_sum(corr_1, evalpara[0], evalpara[1])
+    corr_2 = model.average_pairwise_correlations([data, f2])
+    corr_sum_2 = cal_corr_sum(corr_2, evalpara[0], evalpara[1])
+    probas = utils_prob.predict_proba(np.array([corr_sum_1, corr_sum_2]), gmm_0, gmm_1)
+    pred_label = 1 if probas[0, 1] > probas[0, 0] else 2
+    return probas, pred_label
+
+
+def calc_smooth_acc(pred_labels, true_labels, nb_trials_considered, nearby=14, nb_calibsessions=2):
+    if np.ndim(pred_labels) == 2:
+        pred_labels = pred_labels.reshape(-1)
+        true_labels = true_labels.reshape(-1)
     if len(pred_labels) != len(true_labels):
-        assert len(true_labels) == len(pred_labels) + nb_calibsessions*nb_trials*UPDATE_STEP, "The length of pred_labels and true_labels do not match."
-        right = pred_labels == true_labels[nb_calibsessions*nb_trials*UPDATE_STEP:]
+        assert len(true_labels) == len(pred_labels) + nb_calibsessions*nb_trials_considered, "The length of pred_labels and true_labels do not match."
+        right = pred_labels == true_labels[nb_calibsessions*nb_trials_considered:]
         acc_non_calib = np.sum(right)/len(right)
     else:
         right = pred_labels == true_labels
-        acc_non_calib = np.sum(right[nb_calibsessions*nb_trials*UPDATE_STEP:])/len(right[nb_calibsessions*nb_trials*UPDATE_STEP:])
+        acc_non_calib = np.sum(right[nb_calibsessions*nb_trials_considered:])/len(right[nb_calibsessions*nb_trials_considered:])
     print("Avg acc non-calib: ", acc_non_calib)
     acc = []
     for i in range(len(pred_labels)):
@@ -259,6 +296,48 @@ class STREAM:
                     for k in range(self.UPDATE_STEP):
                         # predict labels of the next trials
                         pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            pred_labels_dict[cond] = pred_labels
+            if PARATRANS:
+                model_init = model
+        return pred_labels_dict
+
+    def recursive_soft(self, weightpara, gmm_0, gmm_1, PARATRANS=True, conds_sorted=None):
+        model_init = None
+        pred_labels_dict = {}
+        conds = self.data_conditions_dict.keys() if conds_sorted is None else conds_sorted
+        for cond in conds:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            if model_init is not None:
+                model = model_init
+                Rinit = Rinit
+                Dinit = Dinit
+            else:
+                model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=self.SEED, SINGLEENC=True)
+                Rinit = None 
+                Dinit = None
+            for k in range(self.UPDATE_STEP):
+                pred_labels.append(predict_labels_soft(segs_views[k], model, gmm_0, gmm_1, self.evalpara)[1])
+            for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
+                data_segs = []
+                feats_segs = []
+                for k in range(self.UPDATE_STEP):
+                    data_segs.append(segs_views[i+k][0])
+                    feats_segs.append(segs_views[i+k][1])
+                seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
+                probas, _ = predict_labels_soft(seg_to_pred, model, gmm_0, gmm_1, self.evalpara)
+                eeg_seg, feats_seg = seg_to_pred
+                f1, f2 = get_feats_per_stream(feats_seg)
+                att_predicted = f1*probas[0, 1] + f2*probas[0, 0]
+                unatt_predicted = f2*probas[0, 1] + f1*probas[0, 0]
+                seg_predicted = [eeg_seg, np.concatenate([att_predicted, unatt_predicted], axis=1)]
+                model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
+                Rinit = model.Rxx 
+                Dinit = model.Dxx
+                if i < (self.nb_trials - 1) * self.UPDATE_STEP:
+                    for k in range(self.UPDATE_STEP):
+                        # predict labels of the next trials
+                        pred_labels.append(predict_labels_soft(segs_views[i+self.UPDATE_STEP+k], model, gmm_0, gmm_1, self.evalpara)[1])
             pred_labels_dict[cond] = pred_labels
             if PARATRANS:
                 model_init = model
