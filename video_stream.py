@@ -63,6 +63,7 @@ with open('data/labels_video.pkl', 'rb') as f:
     labels_dict = pickle.load(f)
 
 argparser = argparse.ArgumentParser()
+argparser.add_argument('--method', type=str, help='The method to be used')
 argparser.add_argument('--nbdisconnected', type=int, default=0, help='Number of disconnected channels')
 argparser.add_argument('--predtriallen', type=int, help='The length of the prediction trials')
 argparser.add_argument('--nbtrialsused', type=int, help='The number of trials to be used in each dataset')
@@ -74,6 +75,7 @@ argparser.add_argument('--evalpara', type=int, nargs='+', help='Parameters (rang
 argparser.add_argument('--weightpara', type=float, nargs='+', help='alpha and beta for the time-adaptive version')
 argparser.add_argument('--paratrans', action='store_true', default=False, help='Whether to enable parameter transfer')
 argparser.add_argument('--shuffle', action='store_true', default=False, help='Shuffle the trials')
+argparser.add_argument('--labelnoise', type=float, help='Percentage of wrong labels')
 argparser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512], help='Random seeds')
 args = argparser.parse_args()
 
@@ -87,6 +89,7 @@ nb_calibsessions = 1
 nb_disconnected = args.nbdisconnected
 trial_len = 60
 sub_trial_length = 60 if args.predtriallen is None else args.predtriallen
+method = args.method
 SHUFFLE = args.shuffle
 PARATRANS = args.paratrans
 UPDATE_STEP = 1 if args.updatestep is None else args.updatestep
@@ -130,6 +133,7 @@ for SEED in args.seeds:
     data_subjects_dict = {}
     feats_subjects_dict = {}
     labels_subjects_dict = {}
+    labels_noisy_dict = {}
     rng = np.random.RandomState(SEED)
     for subj in selected_subjects:
         data_trials = eeg_trials_dict[subj]
@@ -146,29 +150,58 @@ for SEED in args.seeds:
         data_subjects_dict[subj] = data_trials
         feats_subjects_dict[subj] = feats_trials
         labels_subjects_dict[subj] = labels_trials
+        labels_noisy_dict[subj] = utils_stream.add_label_noise(labels_trials, args.labelnoise, rng)
     
     stream = utils_stream.STREAM(data_subjects_dict, feats_subjects_dict, hparadata[0], hparafeats[0], latent_dimensions, SEED, evalpara, nb_update_trials, UPDATE_STEP)
     true_labels = np.stack([v[:nb_update_trials*UPDATE_STEP] for v in labels_subjects_dict.values()], axis=0)
-    print("#####Fixed Supervised#####")
-    pred_labels_dict = stream.fixed_supervised(labels_subjects_dict, selected_subjects[:nb_calibsessions], selected_subjects[nb_calibsessions:])
-    pred_labels_fixed = np.stack([v for v in pred_labels_dict.values()], axis=0)
-    print("#####Adaptive Supervised#####")
-    pred_labels_dict = stream.adaptive_supervised(labels_subjects_dict, weightpara, PARATRANS=PARATRANS)
-    pred_labels_adapsup = np.stack([v for v in pred_labels_dict.values()], axis=0)
-    print("#####Single-Enc#####")
-    pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
-    pred_labels_single = np.stack([v for v in pred_labels_dict.values()], axis=0)
-    print("#####Two-Enc#####")
-    pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=False)
-    pred_labels_two = np.stack([v for v in pred_labels_dict.values()], axis=0)
-    print("#####Soft Single-Enc#####")
-    pred_labels_dict = stream.recursive_soft(weightpara, gmm_0, gmm_1, PARATRANS=PARATRANS)
-    pred_labels_soft = np.stack([v for v in pred_labels_dict.values()], axis=0)
-
-    res_dict = {'true': true_labels, 'fixed': pred_labels_fixed, 'adapsup': pred_labels_adapsup, 'single': pred_labels_single, 'two': pred_labels_two, 'soft': pred_labels_soft}
     folder_path = f'tables/EEG-EOG/stream/'
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-    file_name = f"{folder_path}{'nbtrialsused'+str(args.nbtrialsused) if args.nbtrialsused is not None else ''}nbdisconnected{nb_disconnected}_predtriallen{sub_trial_length}_updatestep{UPDATE_STEP}_nbestsubj{args.nbestsubj}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_weightpara{weightpara[0]}_{weightpara[1]}_PARATRANS{PARATRANS}_SHUFFLE{SHUFFLE}_SEED{SEED}.pkl"
+    file_name = f"{folder_path}{'nbtrialsused'+str(args.nbtrialsused)+'_' if args.nbtrialsused is not None else ''}nbdisconnected{nb_disconnected}_predtriallen{sub_trial_length}_updatestep{UPDATE_STEP}_nbestsubj{args.nbestsubj}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_weightpara{weightpara[0]}_{weightpara[1]}_PARATRANS{PARATRANS}_SHUFFLE{SHUFFLE}{'_labelnoise'+str(args.labelnoise) if args.labelnoise is not None else ''}_SEED{SEED}.pkl"
+    if os.path.exists(file_name):
+        # read the existing file
+        with open(file_name, 'rb') as f:
+            res_dict = pickle.load(f)
+            true_labels_saved = res_dict['true']
+            assert np.array_equal(true_labels, true_labels_saved), "True labels do not match with the saved file."
+    else:
+        res_dict = {'true': true_labels}
+
+    if method == 'fixsup' or 'all':
+        print("#####Fixed Supervised#####")
+        pred_labels_dict = stream.fixed_supervised(labels_noisy_dict, selected_subjects[:nb_calibsessions], selected_subjects[nb_calibsessions:])
+        pred_labels_fixed = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['fixed'] = pred_labels_fixed
+    if method == 'adapsupsingle' or 'all':
+        print("#####Adaptive Supervised (Single-Enc)#####")
+        pred_labels_dict = stream.adaptive_supervised(labels_noisy_dict, weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
+        pred_labels_sup_single = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['adapsup_single'] = pred_labels_sup_single
+    if method == 'adapsuptwo' or 'all':
+        print("#####Adaptive Supervised (Two-Enc)#####")
+        pred_labels_dict = stream.adaptive_supervised(labels_noisy_dict, weightpara, PARATRANS=PARATRANS, SINGLEENC=False)
+        pred_labels_sup_two = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['adapsup_two'] = pred_labels_sup_two
+    if method == 'adapsupsoft' or 'all':
+        print("#####Adaptive Supervised (Soft)#####")
+        pred_labels_dict = stream.recursive_soft(weightpara, gmm_0, gmm_1, PARATRANS=PARATRANS, labels_conditions_dict=labels_noisy_dict, confi=0.85)
+        pred_labels_sup_soft = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['adapsup_soft'] = pred_labels_sup_soft
+    if method == 'single' or 'all':
+        print("#####Single-Enc#####")
+        pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
+        pred_labels_single = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['single'] = pred_labels_single
+    if method == 'two' or 'all':
+        print("#####Two-Enc#####")
+        pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=False)
+        pred_labels_two = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['two'] = pred_labels_two
+    if method == 'soft' or 'all':
+        print("#####Soft Single-Enc#####")
+        pred_labels_dict = stream.recursive_soft(weightpara, gmm_0, gmm_1, PARATRANS=PARATRANS)
+        pred_labels_soft = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['soft'] = pred_labels_soft
+
     with open(file_name, 'wb') as f:
         pickle.dump(res_dict, f)

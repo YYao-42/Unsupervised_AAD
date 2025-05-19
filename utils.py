@@ -652,7 +652,7 @@ def get_influence_all_views(data_views_h, weights_views, lag_views, TRAINMODE, T
         rt = data_aggregated.shape[1]//data_trans.shape[1]
         data_rep = np.tile(data_trans, rt)
         corr = np.array([np.corrcoef(data_rep[:, i], data_aggregated[:, i])[0, 1] for i in range(data_rep.shape[1])])
-        influence = np.reshape(corr, (rt, -1)) # np.reshape(np.abs(corr), (rt, -1))
+        influence = np.reshape(np.abs(corr), (rt, -1)) # np.reshape(corr, (rt, -1))
         if aggcomp is not None:
             influence = np.sum(influence[:,:aggcomp], axis=1, keepdims=True)
         if NORMALIZATION:
@@ -945,8 +945,8 @@ def get_gaze(gaze_path, len_seg, offset=None):
     return gaze_clean
 
 
-def get_eeg_eog(eeg_path, fsStim, bads, expdim=True):
-    eeg_prepro, fs, _ = preprocessing(eeg_path, HP_cutoff = 0.5, AC_freqs=50, band=None, resamp_freqs=fsStim, bads=bads, eog=True, regression=False, normalize=True)
+def get_eeg_eog(eeg_path, fsStim, bads, expdim=True, regression=False):
+    eeg_prepro, fs, _ = preprocessing(eeg_path, HP_cutoff = 0.5, AC_freqs=50, band=None, resamp_freqs=fsStim, bads=bads, eog=True, regression=regression, normalize=True)
     eeg_channel_indices = mne.pick_types(eeg_prepro.info, eeg=True)
     eog_channel_indices = mne.pick_types(eeg_prepro.info, eog=True)
     eeg_downsampled, _ = eeg_prepro[eeg_channel_indices]

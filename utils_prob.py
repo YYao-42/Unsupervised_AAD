@@ -82,8 +82,8 @@ def predict_proba(X, gmm_0, gmm_1, class_priors=None):
     -----------
     X : array-like, shape (n_samples, 2)
         The input data points
-    gmm_red : fitted GaussianMixture for class 0
-    gmm_blue : fitted GaussianMixture for class 1
+    gmm_0 : fitted GaussianMixture for class 0
+    gmm_1 : fitted GaussianMixture for class 1
     class_priors : array-like, shape (2,), optional
         Prior probabilities of the classes. If None, class priors
         are calculated based on the proportion of samples.
@@ -110,5 +110,4 @@ def predict_proba(X, gmm_0, gmm_1, class_priors=None):
     exp_ll = np.exp(ll_combined - ll_max)
     probas = exp_ll / np.sum(exp_ll, axis=1, keepdims=True)
     return probas
-
 

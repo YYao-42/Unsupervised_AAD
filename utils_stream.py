@@ -59,6 +59,20 @@ def change_order_of_trials(data_trials, feats_trials, labels_trials):
     return data_trials_ordered, feats_trials_ordered, labels_trials_ordered
 
 
+def add_label_noise(label_list, noise_rate, rng):
+    """
+    Add noise to the labels
+    """
+    label_copy = copy.deepcopy(label_list)
+    if noise_rate is not None:
+        nb_trials = len(label_copy)
+        nb_noisy_labels = int(nb_trials * noise_rate)
+        indices = rng.choice(nb_trials, nb_noisy_labels, replace=False)
+        for i in indices:
+            label_copy[i] = 3 - label_copy[i]  # flip the label
+    return label_copy
+
+
 def process_data_per_view(view, L, offset, NORMALIZE=True):
     view_hankelized = utils.block_Hankel(view, L, offset)
     if NORMALIZE:
@@ -154,14 +168,27 @@ def predict_labels_single_enc(views, model, evalpara):
     return pred_label
 
 
-def predict_labels_soft(views, model, gmm_0, gmm_1, evalpara):
+def get_class_priors(labels, confi):
+    # check if all elements in labels are None
+    if all(label is None for label in labels):
+        class_0 = 0.5
+        class_1 = 0.5
+    else:
+        labels_sum = np.sum(labels)
+        nb_labels = len(labels)
+        class_1 = (3*confi - 1) - labels_sum*(2*confi - 1)/nb_labels
+        class_0 = 1 - class_1
+    return np.array([class_0, class_1])
+
+
+def predict_labels_soft(views, model, gmm_0, gmm_1, evalpara, class_priors=None):
     data, feats = views
     f1, f2 = get_feats_per_stream(feats)
     corr_1 = model.average_pairwise_correlations([data, f1])
     corr_sum_1 = cal_corr_sum(corr_1, evalpara[0], evalpara[1])
     corr_2 = model.average_pairwise_correlations([data, f2])
     corr_sum_2 = cal_corr_sum(corr_2, evalpara[0], evalpara[1])
-    probas = utils_prob.predict_proba(np.array([corr_sum_1, corr_sum_2]), gmm_0, gmm_1)
+    probas = utils_prob.predict_proba(np.array([corr_sum_1, corr_sum_2]), gmm_0, gmm_1, class_priors=class_priors)
     pred_label = 1 if probas[0, 1] > probas[0, 0] else 2
     return probas, pred_label
 
@@ -301,7 +328,7 @@ class STREAM:
                 model_init = model
         return pred_labels_dict
 
-    def recursive_soft(self, weightpara, gmm_0, gmm_1, PARATRANS=True, conds_sorted=None):
+    def recursive_soft(self, weightpara, gmm_0, gmm_1, PARATRANS=True, conds_sorted=None, labels_conditions_dict=None, confi=0.8):
         model_init = None
         pred_labels_dict = {}
         conds = self.data_conditions_dict.keys() if conds_sorted is None else conds_sorted
@@ -321,11 +348,14 @@ class STREAM:
             for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
                 data_segs = []
                 feats_segs = []
+                labels_segs = []
                 for k in range(self.UPDATE_STEP):
                     data_segs.append(segs_views[i+k][0])
                     feats_segs.append(segs_views[i+k][1])
+                    labels_segs.append(labels_conditions_dict[cond][i+k]) if labels_conditions_dict is not None else None
                 seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
-                probas, _ = predict_labels_soft(seg_to_pred, model, gmm_0, gmm_1, self.evalpara)
+                class_priors = get_class_priors(labels_segs, confi)
+                probas, _ = predict_labels_soft(seg_to_pred, model, gmm_0, gmm_1, self.evalpara, class_priors=class_priors)
                 eeg_seg, feats_seg = seg_to_pred
                 f1, f2 = get_feats_per_stream(feats_seg)
                 att_predicted = f1*probas[0, 1] + f2*probas[0, 0]
