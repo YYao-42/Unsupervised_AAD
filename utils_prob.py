@@ -6,6 +6,7 @@ from algo_ccazoo import CorrelationAnalysis
 from sklearn.mixture import GaussianMixture
 from scipy.special import erf, erfc
 from scipy.optimize import fsolve
+from scipy.stats import norm
 
 
 def cal_corr_sum_multi_trials(corr, range_into_account=2, nb_comp_into_account=1):
@@ -63,12 +64,12 @@ def fit_gmm(corr_att_sum, corr_unatt_sum, n_components_per_class=1):
     """
     corr_att_unatt = np.stack((corr_att_sum, corr_unatt_sum), axis=1)
     corr_unatt_att = np.stack((corr_unatt_sum, corr_att_sum), axis=1)
-    # Train GMM for class 0 
+    # Train GMM for class 0 -> (corr_1, corr_2) f1 is unattended, f2 is attended
     gmm_0 = GaussianMixture(n_components=n_components_per_class, 
                             covariance_type='full', 
                             random_state=42)
     gmm_0.fit(corr_unatt_att)
-    # Train GMM for class 1 
+    # Train GMM for class 1 -> (corr_1, corr_2) f1 is attended, f2 is unattended
     gmm_1 = GaussianMixture(n_components=n_components_per_class, 
                             covariance_type='full', 
                             random_state=42)
@@ -83,17 +84,16 @@ def predict_proba(X, gmm_0, gmm_1, class_priors=None):
     Parameters:
     -----------
     X : array-like, shape (n_samples, 2)
-        The input data points
     gmm_0 : fitted GaussianMixture for class 0
     gmm_1 : fitted GaussianMixture for class 1
     class_priors : array-like, shape (2,), optional
-        Prior probabilities of the classes. If None, class priors
-        are calculated based on the proportion of samples.
+        Prior probabilities of the classes.
         
     Returns:
     --------
     probas : array-like, shape (n_samples, 2)
         The class probabilities for each sample
+        first column is class 0 (f2 is att), second column is class 1 (f1 is att)
     """
     if X.ndim == 1:
         X = X.reshape(1, -1)
@@ -124,6 +124,7 @@ def predict_acc_bpsk(corr_pairs):
     acc: predicted accuracy
     """
     Z_s = np.sum(corr_pairs, axis=1)
+    mu_s = np.mean(Z_s)
     sigma_d = np.std(Z_s)
     def equation_to_solve(x):
         """The equation whose positive root we need to find"""
@@ -137,4 +138,38 @@ def predict_acc_bpsk(corr_pairs):
     assert x > 0, "The root of the equation should be positive"
     BER = 0.5 * erfc(x / np.sqrt(2) / sigma_d)
     acc = 1 - BER
-    return acc
+    mu_a = (mu_s + x) / 2
+    mu_u = (mu_s - x) / 2
+    sigma = sigma_d / np.sqrt(2)
+    return acc, (mu_a, mu_u, sigma)
+
+
+def predict_proba_bpsk(X, stats):
+    """
+    Compute class probabilities for each point in X, with statistics estimated under bpsk framework.
+    
+    Parameters:
+    -----------
+    X : array-like, shape (n_samples, 2)
+    stats: (mu_a, mu_u, sigma), the mean and standard deviation of the distributions of p(rho|feat=att) and p(rho|feat=unatt)
+        
+    Returns:
+    --------
+    probas : array-like, shape (n_samples, 2)
+        The class probabilities for each sample
+        first column is class 0 (f2 is att), second column is class 1 (f1 is att)
+    """
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+    mu_a, mu_u, sigma = stats
+    norm_att = norm(loc=mu_a, scale=sigma)
+    norm_unatt = norm(loc=mu_u, scale=sigma)
+    probas = np.zeros_like(X)
+    for i in range(X.shape[0]):
+        rho_1 = X[i, 0]
+        rho_2 = X[i, 1]
+        p_1a = norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2)/(norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2) + norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1))
+        p_2a = norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1)/(norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1) + norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2))
+        probas[i, 1] = p_1a
+        probas[i, 0] = p_2a
+    return probas

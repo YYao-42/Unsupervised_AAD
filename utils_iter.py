@@ -183,7 +183,8 @@ def bootstrap_corr_pairs(data_trials, feats_trials, nb_samples, model, evalpara)
     trial_len = data_trials[0].shape[0]
     data = np.concatenate(data_trials, axis=0)
     feats = np.concatenate(feats_trials, axis=0)
-    start_points = np.random.randint(0, data.shape[0]-trial_len, size=nb_samples)
+    rng = np.random.default_rng(seed=42)
+    start_points = rng.integers(0, data.shape[0]-trial_len, size=nb_samples)
     data_segs = utils.into_trials_(data, trial_len, start_points=start_points)
     feats_segs = utils.into_trials_(feats, trial_len, start_points=start_points)
     corr_pairs = [predict_labels_single_enc(views, model, evalpara)[1] for views in zip(data_segs, feats_segs)]
@@ -217,10 +218,11 @@ def predict_labels_soft(views, model, gmm_0, gmm_1, evalpara, class_priors=None)
 
 
 def update_seg_soft(views, probas):
+    probas = np.squeeze(probas)
     data, feats = views
     f1, f2 = get_feats_per_stream(feats)
-    att_predicted = f1*probas[0, 1] + f2*probas[0, 0]
-    unatt_predicted = f2*probas[0, 1] + f1*probas[0, 0]
+    att_predicted = f1*probas[1] + f2*probas[0]
+    unatt_predicted = f2*probas[1] + f1*probas[0]
     feats_weighted = np.concatenate([att_predicted, unatt_predicted], axis=1)
     return [data, feats_weighted]
 
@@ -331,7 +333,7 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         return pred_labels_iters
     
-    def soft_bpsk(self, model_init=None):
+    def soft_bpsk(self, model_init=None, GLOBAL=False):
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -350,12 +352,16 @@ class ITERATIVE:
             # reprediction & retraining
             segs_views_train = [[data, feats] for data, feats in zip(self.data_train_trials, self.feats_train_trials)]
             repred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views_train]
-            # corr_pairs = [predict_labels_single_enc(views, model, self.evalpara)[1] for views in segs_views_train]
-            # corr_pairs = np.stack(corr_pairs, axis=0)
-            corr_pairs = bootstrap_corr_pairs(self.data_train_trials, self.feats_train_trials, max(60, len(repred_labels)*2), model, self.evalpara)
-            confidence = utils_prob.predict_acc_bpsk(corr_pairs)
-            att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels, confidence=confidence)
-            feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
+            corr_pairs = np.array([predict_labels_single_enc(views, model, self.evalpara)[1] for views in segs_views_train])
+            corr_pairs_bt = bootstrap_corr_pairs(self.data_train_trials, self.feats_train_trials, max(100, len(repred_labels)*5), model, self.evalpara)
+            confidence, stats = utils_prob.predict_acc_bpsk(corr_pairs_bt)
+            if GLOBAL:
+                att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels, confidence=confidence)
+                feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
+            else:
+                repred_probas = utils_prob.predict_proba_bpsk(corr_pairs, stats)
+                segs_pred = [update_seg_soft(view, probas) for view, probas in zip(segs_views_train, repred_probas)]
+                feats_train = np.concatenate([views[1] for views in segs_pred], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
         pred_labels_iters.append(pred_labels)

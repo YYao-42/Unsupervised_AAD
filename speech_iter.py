@@ -150,8 +150,11 @@ for SEED in args.seeds:
                 pred_labels_soft = iteration.soft(gmm_0, gmm_1)
                 pred_unsup.append(pred_labels_soft)
             elif method == 'bpsk':
-                pred_labels_bpsk = iteration.soft_bpsk()
+                pred_labels_bpsk = iteration.soft_bpsk(GLOBAL=True)
                 pred_unsup.append(pred_labels_bpsk)
+            elif method == 'bpsk_local':
+                pred_labels_bpsk_local = iteration.soft_bpsk(GLOBAL=False)
+                pred_unsup.append(pred_labels_bpsk_local)
             else:
                 raise ValueError(f"Unknown method: {method}")
         true_labels = np.concatenate(true_labels, axis=1)
