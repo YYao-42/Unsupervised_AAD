@@ -72,7 +72,7 @@ def switch_f1_f2(feats):
     return feats_switched
 
 
-def select_att_unatt_feats(feats_trials, label_trials):
+def select_att_unatt_feats(feats_trials, label_trials, confidence=None):
     nb_trials = len(feats_trials)
     att_trials = []
     unatt_trials = []
@@ -81,8 +81,10 @@ def select_att_unatt_feats(feats_trials, label_trials):
         dim_hankel = feats.shape[1]//2
         att = feats[:, (label_trials[i]-1)*dim_hankel:label_trials[i]*dim_hankel]
         unatt = feats[:, (2-label_trials[i])*dim_hankel:(3-label_trials[i])*dim_hankel]
-        att_trials.append(np.expand_dims(att, axis=1) if len(att.shape) == 1 else att)
-        unatt_trials.append(np.expand_dims(unatt, axis=1) if len(unatt.shape) == 1 else unatt)
+        att_weighted = att * confidence + unatt * (1-confidence) if confidence is not None else att
+        unatt_weighted = unatt * confidence + att * (1-confidence) if confidence is not None else unatt
+        att_trials.append(np.expand_dims(att_weighted, axis=1) if len(att_weighted.shape) == 1 else att_weighted)
+        unatt_trials.append(np.expand_dims(unatt_weighted, axis=1) if len(unatt_weighted.shape) == 1 else unatt_weighted)
     return att_trials, unatt_trials
 
 
@@ -154,7 +156,7 @@ def predict_labels_single_enc(views, model, evalpara):
     corr_2 = model.average_pairwise_correlations([data, f2])
     corr_sum_2 = cal_corr_sum(corr_2, evalpara[0], evalpara[1])
     pred_label = 1 if corr_sum_1 > corr_sum_2 else 2
-    return pred_label
+    return pred_label, (corr_sum_1, corr_sum_2)
 
 
 def predict_labels_unbiased(segs_views, labels, L_data, L_feats, evalpara, SINGLEENC=False):
@@ -170,11 +172,23 @@ def predict_labels_unbiased(segs_views, labels, L_data, L_feats, evalpara, SINGL
         feats_train = np.concatenate(feats_train_trials, axis=0)
         model = train_cca_model([data_train, feats_train], latent_dimensions=5, SINGLEENC=SINGLEENC)
         if SINGLEENC:
-            pred_label = predict_labels_single_enc([data, feats], model, evalpara)
+            pred_label, _ = predict_labels_single_enc([data, feats], model, evalpara)
         else:
             pred_label = predict_labels([data, feats], model, L_data, L_feats, evalpara)
         pred_labels.append(pred_label)
     return pred_labels
+
+
+def bootstrap_corr_pairs(data_trials, feats_trials, nb_samples, model, evalpara):
+    trial_len = data_trials[0].shape[0]
+    data = np.concatenate(data_trials, axis=0)
+    feats = np.concatenate(feats_trials, axis=0)
+    start_points = np.random.randint(0, data.shape[0]-trial_len, size=nb_samples)
+    data_segs = utils.into_trials_(data, trial_len, start_points=start_points)
+    feats_segs = utils.into_trials_(feats, trial_len, start_points=start_points)
+    corr_pairs = [predict_labels_single_enc(views, model, evalpara)[1] for views in zip(data_segs, feats_segs)]
+    corr_pairs = np.stack(corr_pairs, axis=0)
+    return corr_pairs
 
 
 def get_class_priors(labels, confi):
@@ -232,7 +246,7 @@ class ITERATIVE:
         feats_train = np.concatenate(feats_train_trials, axis=0)
         model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, SINGLEENC=True)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
-        pred_labels = [predict_labels_single_enc(views, model, self.evalpara) for views in segs_views]
+        pred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views]
         return pred_labels
 
     def unsupervised(self, model_init=None, SINGLEENC=True):
@@ -249,15 +263,15 @@ class ITERATIVE:
             Dinit = None
         pred_labels_iters = []
         for i in range(self.ITERS):
-            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
+            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
             pred_labels_iters.append(pred_labels)
             # reprediction & retraining
             segs_views_train = [[data, feats] for data, feats in zip(self.data_train_trials, self.feats_train_trials)]
-            repred_labels = [predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=False) for views in segs_views_train]
+            repred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=False) for views in segs_views_train]
             att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels)
             feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
-        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
+        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         return pred_labels_iters
@@ -276,16 +290,16 @@ class ITERATIVE:
             Dinit = None
         pred_labels_iters = []
         for i in range(self.ITERS):
-            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
+            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
             pred_labels_iters.append(pred_labels)
             # reprediction & retraining
             segs_views_train = [[data, feats] for data, feats in zip(self.data_train_trials, self.feats_train_trials)]
-            pred_labels_train = np.array([predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views_train])
+            pred_labels_train = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views_train])
             repred_labels = predict_labels_unbiased(segs_views_train, pred_labels_train, self.L_data, self.L_feats, self.evalpara, SINGLEENC=SINGLEENC)
             att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels)
             feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
-        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara) if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
+        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         return pred_labels_iters
@@ -313,6 +327,37 @@ class ITERATIVE:
             feats_train = np.concatenate([views[1] for views in segs_pred], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
         pred_labels = np.array([predict_labels_soft(views, model, gmm_0, gmm_1, self.evalpara)[1] for views in segs_views])
+        pred_labels_iters.append(pred_labels)
+        pred_labels_iters = np.stack(pred_labels_iters, axis=0)
+        return pred_labels_iters
+    
+    def soft_bpsk(self, model_init=None):
+        data_train = np.concatenate(self.data_train_trials, axis=0)
+        feats_train = np.concatenate(self.feats_train_trials, axis=0)
+        segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
+        if model_init is not None:
+            model = model_init
+            Rinit = Rinit
+            Dinit = Dinit
+        else:
+            model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=True, SEED=self.SEED, SINGLEENC=True)
+            Rinit = None 
+            Dinit = None
+        pred_labels_iters = []
+        for i in range(self.ITERS):
+            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
+            pred_labels_iters.append(pred_labels)
+            # reprediction & retraining
+            segs_views_train = [[data, feats] for data, feats in zip(self.data_train_trials, self.feats_train_trials)]
+            repred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views_train]
+            # corr_pairs = [predict_labels_single_enc(views, model, self.evalpara)[1] for views in segs_views_train]
+            # corr_pairs = np.stack(corr_pairs, axis=0)
+            corr_pairs = bootstrap_corr_pairs(self.data_train_trials, self.feats_train_trials, max(60, len(repred_labels)*2), model, self.evalpara)
+            confidence = utils_prob.predict_acc_bpsk(corr_pairs)
+            att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels, confidence=confidence)
+            feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
+            model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
+        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         return pred_labels_iters

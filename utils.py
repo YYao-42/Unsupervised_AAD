@@ -311,6 +311,24 @@ def into_trials(data, fs, t=60, start_points=None):
     return data_trials
 
 
+def into_trials_(data, trial_len_in_samples, start_points=None):
+    if np.ndim(data)==1:
+        data = np.expand_dims(data, axis=1)
+    T = data.shape[0]
+    if start_points is not None:
+        # has a target number of trials with specified start points, then randomly select nb_trials trials
+        # select data from start_points along axis 0
+        data_trials = [data[start:start+trial_len_in_samples, ...] for start in start_points]
+    else:
+        # does not have a target number of trials, then divide data into t s trials without overlap
+        # if T is not a multiple of t sec, then discard the last few samples
+        T_trunc = T - T%(trial_len_in_samples)
+        data_intmin = data[:T_trunc, ...]
+        # segment X_intmin into 1 min trials along axis 0
+        data_trials = np.split(data_intmin, int(T/(trial_len_in_samples)), axis=0)
+    return data_trials
+
+
 def into_trials_with_overlap(data, fs, t=30, overlap=0.9, PERMUTE=False):
     if np.ndim(data) == 1:
         data = np.expand_dims(data, axis=1)

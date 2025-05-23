@@ -39,7 +39,7 @@ def prepare_fold_per_view(trials, hpara, n_folds, fold_idx, SEED=None, SHUFFLE=F
 
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--dataset', type=str, help='The name of the dataset')
-# argparser.add_argument('--method', type=str, help='The method to be used')
+argparser.add_argument('--method', type=str, help='The method to be used')
 argparser.add_argument('--nbdisconnected', type=int, default=0, help='Number of disconnected channels')
 argparser.add_argument('--predtriallen', type=int, help='The length of the prediction trials')
 argparser.add_argument('--updatewinlen', type=int, help='The length of the update windows')
@@ -78,10 +78,10 @@ elif args.dataset == 'earEEG':
     hparafeats = [6, 0] if args.hparafeats is None else args.hparafeats
     evalpara = [3, 2] if args.evalpara is None else args.evalpara
     pred_len = 30 if args.predtriallen is None else args.predtriallen
-    update_len = trial_len  if args.updatewinlen is None else args.updatewinlen
+    update_len = 60  if args.updatewinlen is None else args.updatewinlen
     leave_out_persubj = 2
 
-# method = args.method
+method = args.method
 SHUFFLE = args.shuffle
 nb_disconnected = args.nbdisconnected
 latent_dimensions = 5
@@ -100,11 +100,6 @@ for subject in subjects:
     labels_dict[subject] = label_trials
 
 for SEED in args.seeds:
-    folder_path = f'tables/{args.dataset}/iter/'
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
-    file_name = f"{folder_path}nbtraintrials{args.nbtraintrials}_nbdisconnected{nb_disconnected}_updatelen{update_len}_predlen{pred_len}_nbestsubj{args.nbestsubj}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_SHUFFLE{SHUFFLE}_SEED{SEED}.pkl"
-
     print(f"Running with seed: {SEED}")
     selected_subjects = copy.deepcopy(subjects) 
     est_subs = selected_subjects[:args.nbestsubj]
@@ -113,11 +108,7 @@ for SEED in args.seeds:
     selected_subjects = selected_subjects[args.nbestsubj:]
 
     acc_sup_all = []
-    acc_single_all = []
-    acc_two_all = []
-    acc_single_unbiased_all = []
-    acc_two_unbiased_all = []
-    acc_soft_all = []
+    acc_unsup_all = []
 
     for subject in selected_subjects:
         eeg_trials = eeg_dict[subject]
@@ -126,11 +117,7 @@ for SEED in args.seeds:
 
         true_labels = []
         pred_sup = []
-        pred_single = []
-        pred_two = []
-        pred_single_unbiased = []
-        pred_two_unbiased = []
-        pred_soft = []
+        pred_unsup = []
 
         for fold_idx in range(nb_folds):
             data_train_trials, data_test_trials = prepare_fold_per_view(eeg_trials, hparadata, nb_folds, fold_idx, SHUFFLE=SHUFFLE, SEED=SEED)
@@ -147,44 +134,48 @@ for SEED in args.seeds:
             true_labels.append(np.tile(np.array(labels_test_trials), (ITERS+1, 1)))
             pred_labels_sup = iteration.supervised(labels_train_trials)
             pred_sup.append(pred_labels_sup)
-            pred_labels_single = iteration.unsupervised(SINGLEENC=True)
-            pred_single.append(pred_labels_single)
-            pred_labels_two = iteration.unsupervised(SINGLEENC=False)
-            pred_two.append(pred_labels_two)
-            pred_labels_single_unbiased = iteration.unbiased(SINGLEENC=True)
-            pred_single_unbiased.append(pred_labels_single_unbiased)
-            pred_labels_two_unbiased = iteration.unbiased(SINGLEENC=False)
-            pred_two_unbiased.append(pred_labels_two_unbiased)
-            pred_labels_soft = iteration.soft(gmm_0, gmm_1)
-            pred_soft.append(pred_labels_soft)
+            if method == 'single':
+                pred_labels_single = iteration.unsupervised(SINGLEENC=True)
+                pred_unsup.append(pred_labels_single)
+            elif method == 'two':
+                pred_labels_two = iteration.unsupervised(SINGLEENC=False)
+                pred_unsup.append(pred_labels_two)
+            elif method == 'single_unbiased':
+                pred_labels_single_unbiased = iteration.unbiased(SINGLEENC=True)
+                pred_unsup.append(pred_labels_single_unbiased)
+            elif method == 'two_unbiased':
+                pred_labels_two_unbiased = iteration.unbiased(SINGLEENC=False)
+                pred_unsup.append(pred_labels_two_unbiased)
+            elif method == 'soft':
+                pred_labels_soft = iteration.soft(gmm_0, gmm_1)
+                pred_unsup.append(pred_labels_soft)
+            elif method == 'bpsk':
+                pred_labels_bpsk = iteration.soft_bpsk()
+                pred_unsup.append(pred_labels_bpsk)
+            else:
+                raise ValueError(f"Unknown method: {method}")
         true_labels = np.concatenate(true_labels, axis=1)
         pred_sup = np.concatenate(pred_sup)
-        pred_single = np.concatenate(pred_single, axis=1)
-        pred_two = np.concatenate(pred_two, axis=1)
-        pred_single_unbiased = np.concatenate(pred_single_unbiased, axis=1)
-        pred_two_unbiased = np.concatenate(pred_two_unbiased, axis=1)
-        pred_soft = np.concatenate(pred_soft, axis=1)
+        pred_unsup = np.concatenate(pred_unsup, axis=1)
         acc_sup = np.sum(np.array(pred_sup) == np.array(true_labels[0,:])) / true_labels.shape[1]
-        acc_single = np.sum(np.array(pred_single) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        acc_two = np.sum(np.array(pred_two) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        acc_single_unbiased = np.sum(np.array(pred_single_unbiased) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        acc_two_unbiased = np.sum(np.array(pred_two_unbiased) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        acc_soft = np.sum(np.array(pred_soft) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc single: {acc_single}, Acc two: {acc_two}, Acc single unbiased: {acc_single_unbiased}, Acc two unbiased: {acc_two_unbiased}, Acc soft: {acc_soft}")
+        acc_unsup = np.sum(np.array(pred_unsup) == np.array(true_labels), axis=1) / true_labels.shape[1]
+        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}")
         acc_sup_all.append(acc_sup)
-        acc_single_all.append(acc_single)
-        acc_two_all.append(acc_two)
-        acc_single_unbiased_all.append(acc_single_unbiased)
-        acc_two_unbiased_all.append(acc_two_unbiased)
-        acc_soft_all.append(acc_soft)
+        acc_unsup_all.append(acc_unsup)
     acc_sup_all = np.array(acc_sup_all)
-    acc_single_all = np.stack(acc_single_all, axis=0)
-    acc_two_all = np.stack(acc_two_all, axis=0)
-    acc_single_unbiased_all = np.stack(acc_single_unbiased_all, axis=0)
-    acc_two_unbiased_all = np.stack(acc_two_unbiased_all, axis=0)
-    acc_soft_all = np.stack(acc_soft_all, axis=0)
+    acc_unsup_all = np.array(acc_unsup_all)
 
-    # Save the results
-    res_dict = {'acc_sup': acc_sup_all, 'acc_single': acc_single_all, 'acc_two': acc_two_all, 'acc_single_unbiased': acc_single_unbiased_all, 'acc_two_unbiased': acc_two_unbiased_all, 'acc_soft': acc_soft_all}
+    folder_path = f'tables/{args.dataset}/iter/'
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+    file_name = f"{folder_path}nbtraintrials{args.nbtraintrials}_nbdisconnected{nb_disconnected}_updatelen{update_len}_predlen{pred_len}_nbestsubj{args.nbestsubj}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_SHUFFLE{SHUFFLE}_SEED{SEED}.pkl"
+    if os.path.exists(file_name):
+        with open(file_name, 'rb') as f:
+            res_dict = pickle.load(f)
+    else:
+        res_dict = {}
+    res_dict['acc_sup'] = acc_sup_all
+    res_dict[f'acc_{method}'] = acc_unsup_all
+
     with open(file_name, 'wb') as f:
         pickle.dump(res_dict, f)

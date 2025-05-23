@@ -4,6 +4,8 @@ import utils_stream
 import matplotlib.pyplot as plt
 from algo_ccazoo import CorrelationAnalysis
 from sklearn.mixture import GaussianMixture
+from scipy.special import erf, erfc
+from scipy.optimize import fsolve
 
 
 def cal_corr_sum_multi_trials(corr, range_into_account=2, nb_comp_into_account=1):
@@ -111,3 +113,28 @@ def predict_proba(X, gmm_0, gmm_1, class_priors=None):
     probas = exp_ll / np.sum(exp_ll, axis=1, keepdims=True)
     return probas
 
+
+def predict_acc_bpsk(corr_pairs):
+    """
+    Unsupervised accuracy estimation from correlations
+    M. A. Lopez-Gordo, S. Geirnaert and A. Bertrand, "Unsupervised Accuracy Estimation for Brain-Computer Interfaces Based on Selective Auditory Attention Decoding," in IEEE Transactions on Biomedical Engineering, doi: 10.1109/TBME.2025.3542253
+    Input:
+    corr_pairs : array-like, shape (n_samples, 2). The correlations between (EEG, feat1) and (EEG, feat2) on different windows.
+    Output:
+    acc: predicted accuracy
+    """
+    Z_s = np.sum(corr_pairs, axis=1)
+    sigma_d = np.std(Z_s)
+    def equation_to_solve(x):
+        """The equation whose positive root we need to find"""
+        if x <= 0:
+            return float('inf') 
+        term1 = np.sqrt(2 / np.pi) * sigma_d * np.exp(-x**2 / 2 / sigma_d**2)
+        term2 = x * erf(x / np.sqrt(2 * sigma_d**2))
+        term3 = np.mean(np.abs(corr_pairs[:, 0] - corr_pairs[:, 1]))
+        return term1 + term2 - term3
+    x = fsolve(equation_to_solve, 1)[0]
+    assert x > 0, "The root of the equation should be positive"
+    BER = 0.5 * erfc(x / np.sqrt(2) / sigma_d)
+    acc = 1 - BER
+    return acc
