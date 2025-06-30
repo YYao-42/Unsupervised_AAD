@@ -108,6 +108,7 @@ for SEED in args.seeds:
     selected_subjects = selected_subjects[args.nbestsubj:]
 
     acc_sup_all = []
+    acc_sup_disc_all = []
     acc_unsup_all = []
 
     for subject in selected_subjects:
@@ -117,6 +118,7 @@ for SEED in args.seeds:
 
         true_labels = []
         pred_sup = []
+        pred_sup_disc = []
         pred_unsup = []
 
         for fold_idx in range(nb_folds):
@@ -134,9 +136,17 @@ for SEED in args.seeds:
             true_labels.append(np.tile(np.array(labels_test_trials), (ITERS+1, 1)))
             pred_labels_sup = iteration.supervised(labels_train_trials)
             pred_sup.append(pred_labels_sup)
+            pred_labels_supdisc = iteration.supervised(labels_train_trials, DISCRIMINATIVE=True)
+            pred_sup_disc.append(pred_labels_supdisc)
             if method == 'single':
                 pred_labels_single = iteration.unsupervised(SINGLEENC=True)
                 pred_unsup.append(pred_labels_single)
+            elif method == 'single_warminit':
+                pred_labels_single_warminit = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
+                pred_unsup.append(pred_labels_single_warminit)
+            elif method == 'discriminative':
+                pred_labels_discriminative = iteration.discriminative()
+                pred_unsup.append(pred_labels_discriminative)
             elif method == 'two':
                 pred_labels_two = iteration.unsupervised(SINGLEENC=False)
                 pred_unsup.append(pred_labels_two)
@@ -159,13 +169,17 @@ for SEED in args.seeds:
                 raise ValueError(f"Unknown method: {method}")
         true_labels = np.concatenate(true_labels, axis=1)
         pred_sup = np.concatenate(pred_sup)
+        pred_sup_disc = np.concatenate(pred_sup_disc)
         pred_unsup = np.concatenate(pred_unsup, axis=1)
         acc_sup = np.sum(np.array(pred_sup) == np.array(true_labels[0,:])) / true_labels.shape[1]
+        acc_sup_disc = np.sum(np.array(pred_sup_disc) == np.array(true_labels[0,:])) / true_labels.shape[1]
         acc_unsup = np.sum(np.array(pred_unsup) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}")
+        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc supervised discriminative: {acc_sup_disc:.2f}, Acc unsupervised: {acc_unsup}")
         acc_sup_all.append(acc_sup)
+        acc_sup_disc_all.append(acc_sup_disc)
         acc_unsup_all.append(acc_unsup)
     acc_sup_all = np.array(acc_sup_all)
+    acc_sup_disc_all = np.array(acc_sup_disc_all)
     acc_unsup_all = np.array(acc_unsup_all)
 
     folder_path = f'tables/{args.dataset}/iter/'
@@ -178,6 +192,7 @@ for SEED in args.seeds:
     else:
         res_dict = {}
     res_dict['acc_sup'] = acc_sup_all
+    res_dict['acc_sup_disc'] = acc_sup_disc_all
     res_dict[f'acc_{method}'] = acc_unsup_all
 
     with open(file_name, 'wb') as f:

@@ -101,13 +101,15 @@ def get_rand_model(model, SEED):
     return rand_model
 
 
-def train_cca_model(views_train, latent_dimensions=5, RANDMODEL=False, SEED=None, SINGLEENC=False):
+def train_cca_model(views_train, latent_dimensions=5, RANDMODEL=False, SEED=None, SINGLEENC=False, DISCRIMINATIVE=False):
+    data_train, att_unatt = views_train
+    att, unatt = get_feats_per_stream(att_unatt)
     if SINGLEENC:
-        data_train, att_unatt = views_train
-        att, _ = get_feats_per_stream(att_unatt)
         views_train = [data_train, att]
+    if DISCRIMINATIVE:
+        views_train = [data_train, att, unatt]
     best_model = MCCA_LW(latent_dimensions=latent_dimensions)
-    best_model.fit(views_train)
+    best_model.fit(views_train) if not DISCRIMINATIVE else best_model.fit_discriminative(views_train)
     if RANDMODEL:
         assert SEED is not None, 'SEED must be provided for random initialization'
         best_model = get_rand_model(best_model, SEED)
@@ -241,17 +243,17 @@ class ITERATIVE:
         self.evalpara = evalpara
         self.ITERS = ITERS
 
-    def supervised(self, labels_train_trials):
+    def supervised(self, labels_train_trials, DISCRIMINATIVE=False):
         att_train_trials, unatt_train_trials = select_att_unatt_feats(self.feats_train_trials, labels_train_trials)
         feats_train_trials = [np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_train_trials, unatt_train_trials)]
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(feats_train_trials, axis=0)
-        model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, SINGLEENC=True)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
+        model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, SINGLEENC=True, DISCRIMINATIVE=DISCRIMINATIVE)
         pred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views]
         return pred_labels
 
-    def unsupervised(self, model_init=None, SINGLEENC=True):
+    def unsupervised(self, model_init=None, SINGLEENC=True, WARMINIT=False):
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -260,7 +262,13 @@ class ITERATIVE:
             Rinit = Rinit
             Dinit = Dinit
         else:
-            model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=True, SEED=self.SEED, SINGLEENC=SINGLEENC)
+            if WARMINIT:
+                f1, f2 = get_feats_per_stream(feats_train)
+                fsum = f1 + f2
+                feats_train = np.concatenate([fsum, fsum], axis=1)
+                model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
+            else:
+                model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=True, SEED=self.SEED, SINGLEENC=SINGLEENC)
             Rinit = None 
             Dinit = None
         pred_labels_iters = []
@@ -274,6 +282,33 @@ class ITERATIVE:
             feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
+        pred_labels_iters.append(pred_labels)
+        pred_labels_iters = np.stack(pred_labels_iters, axis=0)
+        return pred_labels_iters
+
+    def discriminative(self, model_init=None):
+        data_train = np.concatenate(self.data_train_trials, axis=0)
+        feats_train = np.concatenate(self.feats_train_trials, axis=0)
+        segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
+        if model_init is not None:
+            model = model_init
+            Rinit = Rinit
+            Dinit = Dinit
+        else:
+            model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=True, SEED=self.SEED, SINGLEENC=False, DISCRIMINATIVE=True)
+            Rinit = None 
+            Dinit = None
+        pred_labels_iters = []
+        for i in range(self.ITERS):
+            pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
+            pred_labels_iters.append(pred_labels)
+            # reprediction & retraining
+            segs_views_train = [[data, feats] for data, feats in zip(self.data_train_trials, self.feats_train_trials)]
+            repred_labels = [predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views_train]
+            att_trials, unatt_trials = select_att_unatt_feats(self.feats_train_trials, repred_labels)
+            feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
+            model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=False, DISCRIMINATIVE=True)
+        pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         return pred_labels_iters

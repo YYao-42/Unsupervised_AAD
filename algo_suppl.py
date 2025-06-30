@@ -83,6 +83,27 @@ class MCCA_LW(_BaseModel):
         self.n_views_ = len(views)
         return self
     
+    def fit_discriminative(self, views, scale=0.5, Rinit=None, Dinit=None):
+        data, att, unatt = views
+        T, Dd = data.shape
+        _, Df = att.shape
+        X_a = np.concatenate(tuple([data, att]), axis=1)
+        X_u = np.concatenate(tuple([data, -unatt]), axis=1)
+        Ra, Da = utils.get_cov_mtx(X_a, [Dd, Df], regularization='lwcov')
+        Ru, Du = utils.get_cov_mtx(X_u, [Dd, Df], regularization='lwcov')
+        Dxx = Da
+        Rxx = Ra + Ru * scale
+        if Rinit is not None:
+            Rxx = self.beta * Rinit + (1 - self.beta) * Rxx
+            Dxx = self.alpha * Dinit + (1 - self.alpha) * Dxx
+        self.Rxx = Rxx
+        self.Dxx = Dxx
+        _, W = eigh(Dxx, Rxx, subset_by_index=[0,self.latent_dimensions-1]) # automatically ascend
+        # Reshape W as (DL*n_components*N)
+        self.weights_ = utils.W_organize(np.real(W), [data, att])
+        self.n_views_ = 2
+        return self
+    
     def fit_R_2view(self, Rxx, dimv1):
         Dxx = np.zeros_like(Rxx)
         Dxx[:dimv1, :dimv1] = Rxx[:dimv1, :dimv1]
