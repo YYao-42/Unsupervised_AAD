@@ -52,6 +52,7 @@ if args.dataset == 'Neetha':
     sub_trial_length = 30 if args.predtriallen is None else args.predtriallen
     leave_out_persubj = 12
     data_len_persubj = 72 * trial_len if args.nbtrialsused is None else args.nbtrialsused * trial_len
+    pool_size = 19 
 elif args.dataset == 'fuglsang2018':
     fs = 32
     trial_len = 50
@@ -62,6 +63,7 @@ elif args.dataset == 'fuglsang2018':
     sub_trial_length = 25 if args.predtriallen is None else args.predtriallen
     leave_out_persubj = 12
     data_len_persubj = 60 * trial_len if args.nbtrialsused is None else args.nbtrialsused * trial_len
+    pool_size = 23
 elif args.dataset == 'earEEG':
     fs = 20
     trial_len = 600
@@ -72,6 +74,9 @@ elif args.dataset == 'earEEG':
     sub_trial_length = 30 if args.predtriallen is None else args.predtriallen
     leave_out_persubj = 2
     data_len_persubj = 6 * trial_len if args.nbtrialsused is None else args.nbtrialsused * trial_len
+    pool_size = 19
+else:
+    raise ValueError("Dataset not recognized. Please use 'Neetha', 'fuglsang2018', or 'earEEG'.")
 
 
 method = args.method
@@ -142,41 +147,51 @@ for SEED in args.seeds:
     else:
         res_dict = {'true': true_labels}
 
-    if method == 'fixsup' or 'all':
+    if method == 'fixsup' or method == 'all':
         print("#####Fixed Supervised#####")
         pred_labels_dict = stream.fixed_supervised(labels_noisy_dict, subjects[:nb_calibsessions], subjects[nb_calibsessions:])
         pred_labels_fixed = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['fixed'] = pred_labels_fixed
-    if method == 'adapsupsingle' or 'all':
+    if method == 'adapsupsingle' or method == 'all':
         print("#####Adaptive Supervised (Single-Enc)#####")
         pred_labels_dict = stream.adaptive_supervised(labels_noisy_dict, weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
         pred_labels_sup_single = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['adapsup_single'] = pred_labels_sup_single
-    if method == 'adapsuptwo' or 'all':
+    if method == 'adapsuptwo' or method == 'all':
         print("#####Adaptive Supervised (Two-Enc)#####")
         pred_labels_dict = stream.adaptive_supervised(labels_noisy_dict, weightpara, PARATRANS=PARATRANS, SINGLEENC=False)
         pred_labels_sup_two = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['adapsup_two'] = pred_labels_sup_two
-    if method == 'adapsupsoft' or 'all':
+    if method == 'adapsupsoft' or method == 'all':
         print("#####Adaptive Supervised (Soft)#####")
         pred_labels_dict = stream.recursive_soft(weightpara, gmm_0, gmm_1, PARATRANS=PARATRANS, labels_conditions_dict=labels_noisy_dict, confi=0.85)
         pred_labels_sup_soft = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['adapsup_soft'] = pred_labels_sup_soft
-    if method == 'single' or 'all':
+    if method == 'single' or method == 'all':
         print("#####Single-Enc#####")
         pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
         pred_labels_single = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['single'] = pred_labels_single
-    if method == 'two' or 'all':
+    if method == 'single_sumfeats' or method == 'all':
+        print("#####Single-Enc, using f1+f2 #####")
+        pred_labels_dict = stream.recursive_sum(weightpara, PARATRANS=PARATRANS, SINGLEENC=True)
+        pred_labels_single_sumfeats = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['single_sumfeats'] = pred_labels_single_sumfeats
+    if method == 'two' or method == 'all':
         print("#####Two-Enc#####")
         pred_labels_dict = stream.recursive(weightpara, PARATRANS=PARATRANS, SINGLEENC=False)
         pred_labels_two = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['two'] = pred_labels_two
-    if method == 'soft' or 'all':
+    if method == 'soft' or method == 'all':
         print("#####Soft Single-Enc#####")
         pred_labels_dict = stream.recursive_soft(weightpara, gmm_0, gmm_1, PARATRANS=PARATRANS)
         pred_labels_soft = np.stack([v for v in pred_labels_dict.values()], axis=0)
         res_dict['soft'] = pred_labels_soft
+    if method == 'bpsk' or method == 'all':
+        print("#####BPSK#####")
+        pred_labels_dict = stream.recursive_bpsk(weightpara, PARATRANS=PARATRANS, pool_size=pool_size)
+        pred_labels_bpsk = np.stack([v for v in pred_labels_dict.values()], axis=0)
+        res_dict['bpsk'] = pred_labels_bpsk
 
     with open(file_name, 'wb') as f:
         pickle.dump(res_dict, f)

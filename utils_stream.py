@@ -87,7 +87,7 @@ def get_feats_per_stream(feats):
     return f1, f2
 
 
-def select_att_unatt_feats(feats_trials, label_trials):
+def select_att_unatt_feats(feats_trials, label_trials, confidence=None):
     nb_trials = len(feats_trials)
     att_trials = []
     unatt_trials = []
@@ -96,8 +96,10 @@ def select_att_unatt_feats(feats_trials, label_trials):
         dim_hankel = feats.shape[1]//2
         att = feats[:, (label_trials[i]-1)*dim_hankel:label_trials[i]*dim_hankel]
         unatt = feats[:, (2-label_trials[i])*dim_hankel:(3-label_trials[i])*dim_hankel]
-        att_trials.append(np.expand_dims(att, axis=1) if len(att.shape) == 1 else att)
-        unatt_trials.append(np.expand_dims(unatt, axis=1) if len(unatt.shape) == 1 else unatt)
+        att_weighted = att * confidence + unatt * (1-confidence) if confidence is not None else att
+        unatt_weighted = unatt * confidence + att * (1-confidence) if confidence is not None else unatt
+        att_trials.append(np.expand_dims(att_weighted, axis=1) if len(att_weighted.shape) == 1 else att_weighted)
+        unatt_trials.append(np.expand_dims(unatt_weighted, axis=1) if len(unatt_weighted.shape) == 1 else unatt_weighted)
     return att_trials, unatt_trials
 
 
@@ -165,7 +167,7 @@ def predict_labels_single_enc(views, model, evalpara):
     corr_2 = model.average_pairwise_correlations([data, f2])
     corr_sum_2 = cal_corr_sum(corr_2, evalpara[0], evalpara[1])
     pred_label = 1 if corr_sum_1 > corr_sum_2 else 2
-    return pred_label
+    return pred_label, (corr_sum_1, corr_sum_2)
 
 
 def get_class_priors(labels, confi):
@@ -212,6 +214,22 @@ def calc_smooth_acc(pred_labels, true_labels, nb_trials_considered, nearby=14, n
     return acc_non_calib, acc
 
 
+def update_corr_pool(corr_pairs_pool, corr_pair):
+    corr_pairs_pool[:-1,:] = corr_pairs_pool[1:,:]
+    corr_pairs_pool[-1,:] = corr_pair
+    return corr_pairs_pool
+
+
+def update_seg_soft(views, probas):
+    probas = np.squeeze(probas)
+    data, feats = views
+    f1, f2 = get_feats_per_stream(feats)
+    att_predicted = f1*probas[1] + f2*probas[0]
+    unatt_predicted = f2*probas[1] + f1*probas[0]
+    feats_weighted = np.concatenate([att_predicted, unatt_predicted], axis=1)
+    return [data, feats_weighted]
+
+
 class STREAM:
     def __init__(self, data_conditions_dict, feats_conditions_dict, L_data, L_feats, latent_dimensions, SEED, evalpara, nb_trials, UPDATE_STEP):
         self.data_conditions_dict = data_conditions_dict
@@ -242,7 +260,7 @@ class STREAM:
             pred_labels = []
             segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
             for i in range(self.nb_trials*self.UPDATE_STEP):
-                pred_labels.append(predict_labels_single_enc(segs_views[i], model, self.evalpara))
+                pred_labels.append(predict_labels_single_enc(segs_views[i], model, self.evalpara)[0])
             pred_labels_dict[cond] = pred_labels
         return pred_labels_dict
 
@@ -263,7 +281,7 @@ class STREAM:
                 Rinit = None 
                 Dinit = None
             for k in range(self.UPDATE_STEP):
-                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
             for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
                 data_segs = []
                 feats_segs = []
@@ -281,7 +299,7 @@ class STREAM:
                 if i < (self.nb_trials - 1) * self.UPDATE_STEP:
                     for k in range(self.UPDATE_STEP):
                         # predict labels of the next trials
-                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
             pred_labels_dict[cond] = pred_labels
             if PARATRANS:
                 model_init = model
@@ -303,7 +321,7 @@ class STREAM:
                 Rinit = None 
                 Dinit = None
             for k in range(self.UPDATE_STEP):
-                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
             for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
                 data_segs = []
                 feats_segs = []
@@ -311,7 +329,7 @@ class STREAM:
                     data_segs.append(segs_views[i+k][0])
                     feats_segs.append(segs_views[i+k][1])
                 seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
-                label = predict_labels_single_enc(seg_to_pred, model, self.evalpara) if SINGLEENC else predict_labels(seg_to_pred, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=False) 
+                label = predict_labels_single_enc(seg_to_pred, model, self.evalpara)[0] if SINGLEENC else predict_labels(seg_to_pred, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=False) 
                 if label == 1:
                     seg_predicted = seg_to_pred
                 else:
@@ -322,7 +340,47 @@ class STREAM:
                 if i < (self.nb_trials - 1) * self.UPDATE_STEP:
                     for k in range(self.UPDATE_STEP):
                         # predict labels of the next trials
-                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara) if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            pred_labels_dict[cond] = pred_labels
+            if PARATRANS:
+                model_init = model
+        return pred_labels_dict
+
+    def recursive_sum(self, weightpara, PARATRANS=True, SINGLEENC=True, conds_sorted=None):
+        model_init = None
+        pred_labels_dict = {}
+        conds = self.data_conditions_dict.keys() if conds_sorted is None else conds_sorted
+        for cond in conds:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            if model_init is not None:
+                model = model_init
+                Rinit = Rinit
+                Dinit = Dinit
+            else:
+                model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = None 
+                Dinit = None
+            for k in range(self.UPDATE_STEP):
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
+            for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
+                data_segs = []
+                feats_segs = []
+                for k in range(self.UPDATE_STEP):
+                    data_segs.append(segs_views[i+k][0])
+                    feats_segs.append(segs_views[i+k][1])
+                new_feats = np.concatenate(feats_segs, axis=0)
+                f1, f2 = get_feats_per_stream(new_feats)
+                fsum = f1 + f2
+                new_feats = np.concatenate([fsum, fsum], axis=1)
+                new_seg = [np.concatenate(data_segs, axis=0), new_feats]
+                model = train_cca_model_adaptive(new_seg, Rinit, Dinit, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=self.SEED, SINGLEENC=SINGLEENC)
+                Rinit = model.Rxx 
+                Dinit = model.Dxx
+                if i < (self.nb_trials - 1) * self.UPDATE_STEP:
+                    for k in range(self.UPDATE_STEP):
+                        # predict labels of the next trials
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara)[0] if SINGLEENC else predict_labels(segs_views[i+self.UPDATE_STEP+k], model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True))
             pred_labels_dict[cond] = pred_labels
             if PARATRANS:
                 model_init = model
@@ -371,4 +429,52 @@ class STREAM:
             pred_labels_dict[cond] = pred_labels
             if PARATRANS:
                 model_init = model
+        return pred_labels_dict
+    
+    def recursive_bpsk(self, weightpara, PARATRANS=True, conds_sorted=None, pool_size=15):
+        model_init = None
+        pred_labels_dict = {}
+        conds = self.data_conditions_dict.keys() if conds_sorted is None else conds_sorted
+        corr_pairs_pool = np.zeros((pool_size, 2))
+        for cond in conds:
+            pred_labels = []
+            segs_views = [[data, feats] for data, feats in zip(self.data_conditions_dict[cond], self.feats_conditions_dict[cond])]
+            if model_init is not None:
+                model = model_init
+                Rinit = Rinit
+                Dinit = Dinit
+            else:
+                model = train_cca_model_adaptive(segs_views[0], None, None, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=True, SEED=self.SEED, SINGLEENC=True)
+                Rinit = None 
+                Dinit = None
+            for k in range(self.UPDATE_STEP):
+                pred_labels.append(predict_labels_single_enc(segs_views[k], model, self.evalpara)[0])
+            for i in range(0, self.nb_trials*self.UPDATE_STEP, self.UPDATE_STEP):
+                data_segs = []
+                feats_segs = []
+                for k in range(self.UPDATE_STEP):
+                    data_segs.append(segs_views[i+k][0])
+                    feats_segs.append(segs_views[i+k][1])
+                seg_to_pred = [np.concatenate(data_segs, axis=0), np.concatenate(feats_segs, axis=0)]
+                pred_label, corr_pair = predict_labels_single_enc(seg_to_pred, model, self.evalpara)
+                corr_pairs_pool = update_corr_pool(corr_pairs_pool, corr_pair)
+                confidence, stats = utils_prob.predict_acc_bpsk(corr_pairs_pool)
+                # probas = utils_prob.predict_proba_bpsk(np.array(corr_pair), stats) # check whether using this or using confidence directly is better
+                # seg_predicted = update_seg_soft(seg_to_pred, probas)
+                confidence = 1 if confidence > 0.7 else confidence
+                att_trials, unatt_trials = select_att_unatt_feats([seg_to_pred[1]], [pred_label], confidence=confidence)
+                feats_pred = np.concatenate([att_trials[0], unatt_trials[0]], axis=1)
+                seg_predicted = [seg_to_pred[0], feats_pred]
+                model = train_cca_model_adaptive(seg_predicted, Rinit, Dinit, latent_dimensions=self.latent_dimensions, weightpara=weightpara, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
+                Rinit = model.Rxx 
+                Dinit = model.Dxx
+                if i < (self.nb_trials - 1) * self.UPDATE_STEP:
+                    for k in range(self.UPDATE_STEP):
+                        # predict labels of the next trials
+                        pred_labels.append(predict_labels_single_enc(segs_views[i+self.UPDATE_STEP+k], model, self.evalpara)[0])
+            pred_labels_dict[cond] = pred_labels
+            if PARATRANS:
+                model_init = model
+            else:
+                corr_pairs_pool = np.zeros((pool_size, 2))
         return pred_labels_dict

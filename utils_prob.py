@@ -168,8 +168,18 @@ def predict_proba_bpsk(X, stats):
     for i in range(X.shape[0]):
         rho_1 = X[i, 0]
         rho_2 = X[i, 1]
-        p_1a = norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2)/(norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2) + norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1))
-        p_2a = norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1)/(norm_att.pdf(rho_2)*norm_unatt.pdf(rho_1) + norm_att.pdf(rho_1)*norm_unatt.pdf(rho_2))
+        # Calculate log probabilities to avoid underflow
+        log_term1 = norm_att.logpdf(rho_1) + norm_unatt.logpdf(rho_2)
+        log_term2 = norm_att.logpdf(rho_2) + norm_unatt.logpdf(rho_1)
+        # Use log-sum-exp trick
+        max_log = max(log_term1, log_term2)
+        # Subtract max to prevent overflow, then exp
+        exp_term1 = np.exp(log_term1 - max_log)
+        exp_term2 = np.exp(log_term2 - max_log)
+        # Calculate probabilities
+        sum_terms = exp_term1 + exp_term2
+        p_1a = exp_term1 / sum_terms
+        p_2a = exp_term2 / sum_terms
         probas[i, 1] = p_1a
         probas[i, 0] = p_2a
     return probas
