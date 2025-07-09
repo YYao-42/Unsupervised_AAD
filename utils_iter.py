@@ -2,6 +2,7 @@ import utils
 import utils_prob
 import numpy as np
 import copy
+import time
 from algo_suppl import MCCA_LW
 from itertools import product
 
@@ -254,6 +255,7 @@ class ITERATIVE:
         return pred_labels
 
     def unsupervised(self, model_init=None, SINGLEENC=True, WARMINIT=False):
+        cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -284,9 +286,12 @@ class ITERATIVE:
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
-        return pred_labels_iters
+        cpu_end = time.process_time()
+        cpu_time = cpu_end - cpu_start
+        return pred_labels_iters, cpu_time
 
     def discriminative(self, model_init=None):
+        cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -311,9 +316,12 @@ class ITERATIVE:
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
-        return pred_labels_iters
+        cpu_end = time.process_time()
+        cpu_time = cpu_end - cpu_start
+        return pred_labels_iters, cpu_time
 
     def unbiased(self, model_init=None, SINGLEENC=True):
+        cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -339,9 +347,12 @@ class ITERATIVE:
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] if SINGLEENC else predict_labels(views, model, self.L_data, self.L_feats, self.evalpara, NEWSEG=True) for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
-        return pred_labels_iters
+        cpu_end = time.process_time()
+        cpu_time = cpu_end - cpu_start
+        return pred_labels_iters, cpu_time
     
     def soft(self, gmm_0, gmm_1, model_init=None):
+        cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -366,9 +377,12 @@ class ITERATIVE:
         pred_labels = np.array([predict_labels_soft(views, model, gmm_0, gmm_1, self.evalpara)[1] for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
-        return pred_labels_iters
+        cpu_end = time.process_time()
+        cpu_time = cpu_end - cpu_start
+        return pred_labels_iters, cpu_time
     
     def soft_bpsk(self, model_init=None, GLOBAL=False):
+        cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
         feats_train = np.concatenate(self.feats_train_trials, axis=0)
         segs_views = [[data, feats] for data, feats in zip(self.data_test_trials, self.feats_test_trials)]
@@ -401,4 +415,6 @@ class ITERATIVE:
         pred_labels = np.array([predict_labels_single_enc(views, model, self.evalpara)[0] for views in segs_views])
         pred_labels_iters.append(pred_labels)
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
-        return pred_labels_iters
+        cpu_end = time.process_time()
+        cpu_time = cpu_end - cpu_start
+        return pred_labels_iters, cpu_time

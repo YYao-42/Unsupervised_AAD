@@ -44,13 +44,12 @@ argparser.add_argument('--nbdisconnected', type=int, default=0, help='Number of 
 argparser.add_argument('--predtriallen', type=int, help='The length of the prediction trials')
 argparser.add_argument('--updatewinlen', type=int, help='The length of the update windows')
 argparser.add_argument('--nbtraintrials', type=int, help='The number of trials to be used in training')
-argparser.add_argument('--nbestsubj', type=int, default=2, help='Number of the subjects to be used for estimating the distribution of att_uatt')
 argparser.add_argument('--hparadata', type=int, nargs='+', help='Parameters of the hankel matrix for the data')
 argparser.add_argument('--hparafeats', type=int, nargs='+', help='Parameters of the hankel matrix for the features')
 argparser.add_argument('--evalpara', type=int, nargs='+', help='Parameters (range_into_account, nb_comp_into_account) for the evaluation')
 argparser.add_argument('--shuffle', action='store_true', default=False, help='Shuffle the trials')
 # argparser.add_argument('--labelnoise', type=float, help='Percentage of wrong labels')
-argparser.add_argument('--seeds', type=int, nargs='+', default=[1], help='Random seeds')
+argparser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 4, 8, 16], help='Random seeds')
 args = argparser.parse_args()
 
 if args.dataset == 'Neetha':
@@ -86,8 +85,8 @@ SHUFFLE = args.shuffle
 nb_disconnected = args.nbdisconnected
 latent_dimensions = 5
 nb_folds = 3
-ITERS = 8
-data_folder = f'../../Experiments/Data/{args.dataset}/'
+ITERS = 6
+data_folder = rf'C:\Users\Gebruiker\Documents\Experiments\data\{args.dataset}'
 files = [f for f in os.listdir(data_folder) if f.endswith('.mat')]
 subjects = [int(''.join(filter(str.isdigit, f))) for f in files]
 eeg_dict = {}
@@ -101,15 +100,12 @@ for subject in subjects:
 
 for SEED in args.seeds:
     print(f"Running with seed: {SEED}")
-    selected_subjects = copy.deepcopy(subjects) 
-    est_subs = selected_subjects[:args.nbestsubj]
-    est_corr_att_sum, est_corr_unatt_sum = utils_prob.estimate_distribution_corr(eeg_dict, feats_dict, labels_dict, est_subs, fs, hparadata, hparafeats, leave_out_persubj=leave_out_persubj, trial_len=update_len, range_into_account=evalpara[0], nb_comp_into_account=evalpara[1])
-    gmm_0, gmm_1 = utils_prob.fit_gmm(est_corr_att_sum, est_corr_unatt_sum, n_components_per_class=1)
-    selected_subjects = selected_subjects[args.nbestsubj:]
+    selected_subjects = subjects
 
     acc_sup_all = []
-    acc_sup_disc_all = []
+    # acc_sup_disc_all = []
     acc_unsup_all = []
+    cpu_time_all = []
 
     for subject in selected_subjects:
         eeg_trials = eeg_dict[subject]
@@ -117,8 +113,9 @@ for SEED in args.seeds:
         labels_trials = labels_dict[subject]
 
         true_labels = []
+        cpu_times = []
         pred_sup = []
-        pred_sup_disc = []
+        # pred_sup_disc = []
         pred_unsup = []
 
         for fold_idx in range(nb_folds):
@@ -136,64 +133,59 @@ for SEED in args.seeds:
             true_labels.append(np.tile(np.array(labels_test_trials), (ITERS+1, 1)))
             pred_labels_sup = iteration.supervised(labels_train_trials)
             pred_sup.append(pred_labels_sup)
-            pred_labels_supdisc = iteration.supervised(labels_train_trials, DISCRIMINATIVE=True)
-            pred_sup_disc.append(pred_labels_supdisc)
+            # pred_labels_supdisc = iteration.supervised(labels_train_trials, DISCRIMINATIVE=True)
+            # pred_sup_disc.append(pred_labels_supdisc)
             if method == 'single':
-                pred_labels_single = iteration.unsupervised(SINGLEENC=True)
-                pred_unsup.append(pred_labels_single)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True)
             elif method == 'single_warminit':
-                pred_labels_single_warminit = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
-                pred_unsup.append(pred_labels_single_warminit)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
             elif method == 'discriminative':
-                pred_labels_discriminative = iteration.discriminative()
-                pred_unsup.append(pred_labels_discriminative)
+                pred_labels_unsup, cpu_time = iteration.discriminative()
             elif method == 'two':
-                pred_labels_two = iteration.unsupervised(SINGLEENC=False)
-                pred_unsup.append(pred_labels_two)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=False)
             elif method == 'single_unbiased':
-                pred_labels_single_unbiased = iteration.unbiased(SINGLEENC=True)
-                pred_unsup.append(pred_labels_single_unbiased)
+                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=True)
             elif method == 'two_unbiased':
-                pred_labels_two_unbiased = iteration.unbiased(SINGLEENC=False)
-                pred_unsup.append(pred_labels_two_unbiased)
-            elif method == 'soft':
-                pred_labels_soft = iteration.soft(gmm_0, gmm_1)
-                pred_unsup.append(pred_labels_soft)
+                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=False)
             elif method == 'bpsk':
-                pred_labels_bpsk = iteration.soft_bpsk(GLOBAL=True)
-                pred_unsup.append(pred_labels_bpsk)
+                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=True)
             elif method == 'bpsk_local':
-                pred_labels_bpsk_local = iteration.soft_bpsk(GLOBAL=False)
-                pred_unsup.append(pred_labels_bpsk_local)
+                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=False)
             else:
                 raise ValueError(f"Unknown method: {method}")
+            pred_unsup.append(pred_labels_unsup)
+            cpu_times.append(cpu_time)
         true_labels = np.concatenate(true_labels, axis=1)
         pred_sup = np.concatenate(pred_sup)
-        pred_sup_disc = np.concatenate(pred_sup_disc)
+        # pred_sup_disc = np.concatenate(pred_sup_disc)
         pred_unsup = np.concatenate(pred_unsup, axis=1)
+        cpu_times = np.array(cpu_times)
         acc_sup = np.sum(np.array(pred_sup) == np.array(true_labels[0,:])) / true_labels.shape[1]
-        acc_sup_disc = np.sum(np.array(pred_sup_disc) == np.array(true_labels[0,:])) / true_labels.shape[1]
+        # acc_sup_disc = np.sum(np.array(pred_sup_disc) == np.array(true_labels[0,:])) / true_labels.shape[1]
         acc_unsup = np.sum(np.array(pred_unsup) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc supervised discriminative: {acc_sup_disc:.2f}, Acc unsupervised: {acc_unsup}")
+        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}, CPU time: {np.mean(cpu_times):.2f} seconds")
         acc_sup_all.append(acc_sup)
-        acc_sup_disc_all.append(acc_sup_disc)
+        # acc_sup_disc_all.append(acc_sup_disc)
         acc_unsup_all.append(acc_unsup)
+        cpu_time_all.append(np.mean(cpu_times))
     acc_sup_all = np.array(acc_sup_all)
-    acc_sup_disc_all = np.array(acc_sup_disc_all)
+    # acc_sup_disc_all = np.array(acc_sup_disc_all)
     acc_unsup_all = np.array(acc_unsup_all)
-
+    cpu_time_all = np.array(cpu_time_all)
+    
     folder_path = f'tables/{args.dataset}/iter/'
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-    file_name = f"{folder_path}nbtraintrials{args.nbtraintrials}_nbdisconnected{nb_disconnected}_updatelen{update_len}_predlen{pred_len}_nbestsubj{args.nbestsubj}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_SHUFFLE{SHUFFLE}_SEED{SEED}.pkl"
+    file_name = f"{folder_path}nbtraintrials{args.nbtraintrials}_nbdisconnected{nb_disconnected}_updatelen{update_len}_predlen{pred_len}_hparadata{hparadata[0]}_{hparadata[1]}_hparafeats{hparafeats[0]}_{hparafeats[1]}_evalpara{evalpara[0]}_{evalpara[1]}_SHUFFLE{SHUFFLE}_SEED{SEED}.pkl"
     if os.path.exists(file_name):
         with open(file_name, 'rb') as f:
             res_dict = pickle.load(f)
     else:
         res_dict = {}
     res_dict['acc_sup'] = acc_sup_all
-    res_dict['acc_sup_disc'] = acc_sup_disc_all
+    # res_dict['acc_sup_disc'] = acc_sup_disc_all
     res_dict[f'acc_{method}'] = acc_unsup_all
+    res_dict[f'cpu_time_{method}'] = cpu_time_all
 
     with open(file_name, 'wb') as f:
         pickle.dump(res_dict, f)

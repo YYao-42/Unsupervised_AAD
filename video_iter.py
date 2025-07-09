@@ -88,23 +88,24 @@ hparafeats = [15, 0] if args.hparafeats is None else args.hparafeats
 evalpara = [3, 2] if args.evalpara is None else args.evalpara
 nb_disconnected = args.nbdisconnected
 trial_len = 60
-pred_len = 60 if args.predtriallen is None else args.predtriallen
+pred_len = 30 if args.predtriallen is None else args.predtriallen
 update_len = trial_len if args.updatewinlen is None else args.updatewinlen
 SHUFFLE = args.shuffle
-ITERS = 8
+ITERS = 6
 
 # files = get_video_sequences(rf"C:\Users\yyao\Documents\Experiments\data\SVAD\SUB_01")
-files = get_video_sequences(rf"C:\Users\Gebruiker\Documents\Experiments\data\SUB_01")
+files = get_video_sequences(rf"C:\Users\Gebruiker\Documents\Experiments\data\SVAD\SUB_01")
 # video pairs for testing
-pairs_test = ['03_05', '06_16', '08_15', '01_13', '02_12', '04_09', '07_14']
+pairs_test = ['03_05', '06_16', '08_15']
 
 for SEED in args.seeds:
     print(f"Running with seed: {SEED}")
-    # selected_subjects = ['Pilot_1', 'Pilot_5', 'Pilot_6', 'Pilot_10', 'Pilot_11', 'Pilot_12', 'Pilot_13', 'Pilot_14', 'Pilot_15', 'Pilot_17', 'Pilot_19', 'Pilot_20', 'Pilot_21']
+    # selected_subjects = ['Pilot_1', 'Pilot_4', 'Pilot_5', 'Pilot_6', 'Pilot_10', 'Pilot_11', 'Pilot_12', 'Pilot_13', 'Pilot_14', 'Pilot_15', 'Pilot_17', 'Pilot_18', 'Pilot_19', 'Pilot_20', 'Pilot_21']
     selected_subjects = subjects
 
     acc_sup_all = []
     acc_unsup_all = []
+    cpu_time_all = []
 
     for subj in selected_subjects:
         data_videos = eeg_dict[subj]
@@ -112,6 +113,7 @@ for SEED in args.seeds:
         labels_videos = labels_dict[subj]
 
         true_labels = []
+        cpu_times = []
         pred_sup = []
         pred_unsup = []
 
@@ -154,41 +156,38 @@ for SEED in args.seeds:
             pred_labels_sup = iteration.supervised(labels_train_trials)
             pred_sup.append(pred_labels_sup)
             if method == 'single':
-                pred_labels_single = iteration.unsupervised(SINGLEENC=True)
-                pred_unsup.append(pred_labels_single)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True)
             elif method == 'single_warminit':
-                pred_labels_single_warminit = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
-                pred_unsup.append(pred_labels_single_warminit)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
             elif method == 'discriminative':
-                pred_labels_discriminative = iteration.discriminative()
-                pred_unsup.append(pred_labels_discriminative)
+                pred_labels_unsup, cpu_time = iteration.discriminative()
             elif method == 'two':
-                pred_labels_two = iteration.unsupervised(SINGLEENC=False)
-                pred_unsup.append(pred_labels_two)
+                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=False)
             elif method == 'single_unbiased':
-                pred_labels_single_unbiased = iteration.unbiased(SINGLEENC=True)
-                pred_unsup.append(pred_labels_single_unbiased)
+                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=True)
             elif method == 'two_unbiased':
-                pred_labels_two_unbiased = iteration.unbiased(SINGLEENC=False)
-                pred_unsup.append(pred_labels_two_unbiased)
+                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=False)
             elif method == 'bpsk':
-                pred_labels_bpsk = iteration.soft_bpsk(GLOBAL=True)
-                pred_unsup.append(pred_labels_bpsk)
+                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=True)
             elif method == 'bpsk_local':
-                pred_labels_bpsk_local = iteration.soft_bpsk(GLOBAL=False)
-                pred_unsup.append(pred_labels_bpsk_local)
+                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=False)
             else:
                 raise ValueError(f"Unknown method: {method}")
+            pred_unsup.append(pred_labels_unsup)
+            cpu_times.append(cpu_time)
         true_labels = np.concatenate(true_labels, axis=1)
         pred_sup = np.concatenate(pred_sup)
         pred_unsup = np.concatenate(pred_unsup, axis=1)
+        cpu_times = np.array(cpu_times)
         acc_sup = np.sum(np.array(pred_sup) == np.array(true_labels[0,:])) / true_labels.shape[1]
         acc_unsup = np.sum(np.array(pred_unsup) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        print(f"Subject: {subj}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}")
+        print(f"Subject: {subj}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}, CPU time: {np.mean(cpu_times):.2f} seconds")
         acc_sup_all.append(acc_sup)
         acc_unsup_all.append(acc_unsup)
+        cpu_time_all.append(np.mean(cpu_times))
     acc_sup_all = np.array(acc_sup_all)
     acc_unsup_all = np.array(acc_unsup_all)
+    cpu_time_all = np.array(cpu_time_all)
     
     folder_path = f'tables/EEG-EOG/iter/'
     if not os.path.exists(folder_path):
@@ -201,6 +200,7 @@ for SEED in args.seeds:
         res_dict = {}
     res_dict['acc_sup'] = acc_sup_all
     res_dict[f'acc_{method}'] = acc_unsup_all
+    res_dict[f'cpu_time_{method}'] = cpu_time_all
 
     with open(file_name, 'wb') as f:
         pickle.dump(res_dict, f)
