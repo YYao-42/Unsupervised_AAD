@@ -49,7 +49,7 @@ argparser.add_argument('--hparafeats', type=int, nargs='+', help='Parameters of 
 argparser.add_argument('--evalpara', type=int, nargs='+', help='Parameters (range_into_account, nb_comp_into_account) for the evaluation')
 argparser.add_argument('--shuffle', action='store_true', default=False, help='Shuffle the trials')
 # argparser.add_argument('--labelnoise', type=float, help='Percentage of wrong labels')
-argparser.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 4, 8, 16], help='Random seeds')
+argparser.add_argument('--seeds', type=int, nargs='+', default=[16, 32, 64, 128], help='Random seeds')
 args = argparser.parse_args()
 
 if args.dataset == 'Neetha':
@@ -105,6 +105,7 @@ for SEED in args.seeds:
     acc_sup_all = []
     # acc_sup_disc_all = []
     acc_unsup_all = []
+    acc_train_all = []
     cpu_time_all = []
 
     for subject in selected_subjects:
@@ -112,11 +113,13 @@ for SEED in args.seeds:
         feats_trials = feats_dict[subject]
         labels_trials = labels_dict[subject]
 
+        true_labels_train = []
         true_labels = []
         cpu_times = []
         pred_sup = []
         # pred_sup_disc = []
         pred_unsup = []
+        repred = []
 
         for fold_idx in range(nb_folds):
             data_train_trials, data_test_trials = prepare_fold_per_view(eeg_trials, hparadata, nb_folds, fold_idx, SHUFFLE=SHUFFLE, SEED=SEED)
@@ -130,47 +133,54 @@ for SEED in args.seeds:
                 data_train_trials, feats_train_trials, labels_train_trials = utils_iter.further_split_and_shuffle(data_train_trials, feats_train_trials, labels_train_trials, update_len, fs, SHUFFLE=SHUFFLE, SEED=SEED)
             data_test_trials, feats_test_trials, labels_test_trials = utils_iter.further_split_and_shuffle(data_test_trials, feats_test_trials, labels_test_trials, pred_len, fs, SHUFFLE=SHUFFLE, SEED=SEED)
             iteration = utils_iter.ITERATIVE(data_train_trials, data_test_trials, feats_train_trials, feats_test_trials, labels_test_trials, hparadata[0], hparafeats[0], latent_dimensions, SEED, evalpara, ITERS=ITERS)
+            true_labels_train.append(np.array(labels_train_trials))
             true_labels.append(np.tile(np.array(labels_test_trials), (ITERS+1, 1)))
             pred_labels_sup = iteration.supervised(labels_train_trials)
             pred_sup.append(pred_labels_sup)
             # pred_labels_supdisc = iteration.supervised(labels_train_trials, DISCRIMINATIVE=True)
             # pred_sup_disc.append(pred_labels_supdisc)
             if method == 'single':
-                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.unsupervised(SINGLEENC=True)
             elif method == 'single_warminit':
-                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.unsupervised(SINGLEENC=True, WARMINIT=True)
             elif method == 'discriminative':
-                pred_labels_unsup, cpu_time = iteration.discriminative()
+                pred_labels_unsup, repred_labels, cpu_time = iteration.discriminative()
             elif method == 'two':
-                pred_labels_unsup, cpu_time = iteration.unsupervised(SINGLEENC=False)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.unsupervised(SINGLEENC=False)
             elif method == 'single_unbiased':
-                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=True)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.unbiased(SINGLEENC=True)
             elif method == 'two_unbiased':
-                pred_labels_unsup, cpu_time = iteration.unbiased(SINGLEENC=False)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.unbiased(SINGLEENC=False)
             elif method == 'bpsk':
-                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=True)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.soft_bpsk(GLOBAL=True)
             elif method == 'bpsk_local':
-                pred_labels_unsup, cpu_time = iteration.soft_bpsk(GLOBAL=False)
+                pred_labels_unsup, repred_labels, cpu_time = iteration.soft_bpsk(GLOBAL=False)
             else:
                 raise ValueError(f"Unknown method: {method}")
             pred_unsup.append(pred_labels_unsup)
+            repred.append(repred_labels)
             cpu_times.append(cpu_time)
+        true_labels_train = np.concatenate(true_labels_train)
         true_labels = np.concatenate(true_labels, axis=1)
         pred_sup = np.concatenate(pred_sup)
         # pred_sup_disc = np.concatenate(pred_sup_disc)
         pred_unsup = np.concatenate(pred_unsup, axis=1)
+        repred = np.concatenate(repred)
         cpu_times = np.array(cpu_times)
-        acc_sup = np.sum(np.array(pred_sup) == np.array(true_labels[0,:])) / true_labels.shape[1]
-        # acc_sup_disc = np.sum(np.array(pred_sup_disc) == np.array(true_labels[0,:])) / true_labels.shape[1]
-        acc_unsup = np.sum(np.array(pred_unsup) == np.array(true_labels), axis=1) / true_labels.shape[1]
-        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}, CPU time: {np.mean(cpu_times):.2f} seconds")
+        acc_sup = np.sum(pred_sup == true_labels[0,:]) / true_labels.shape[1]
+        # acc_sup_disc = np.sum(pred_sup_disc == true_labels[0,:]) / true_labels.shape[1]
+        acc_unsup = np.sum(pred_unsup == true_labels, axis=1) / true_labels.shape[1]
+        acc_train = np.sum(repred == true_labels_train) / len(true_labels_train)
+        print(f"Subject: {subject}, Acc supervised: {acc_sup:.2f}, Acc unsupervised: {acc_unsup}, Acc unsupervised (Train): {acc_train:.2f}, CPU time: {np.mean(cpu_times):.2f} seconds")
         acc_sup_all.append(acc_sup)
         # acc_sup_disc_all.append(acc_sup_disc)
         acc_unsup_all.append(acc_unsup)
+        acc_train_all.append(acc_train)
         cpu_time_all.append(np.mean(cpu_times))
     acc_sup_all = np.array(acc_sup_all)
     # acc_sup_disc_all = np.array(acc_sup_disc_all)
     acc_unsup_all = np.array(acc_unsup_all)
+    acc_train_all = np.array(acc_train_all)
     cpu_time_all = np.array(cpu_time_all)
     
     folder_path = f'tables/{args.dataset}/iter/'
@@ -185,6 +195,7 @@ for SEED in args.seeds:
     res_dict['acc_sup'] = acc_sup_all
     # res_dict['acc_sup_disc'] = acc_sup_disc_all
     res_dict[f'acc_{method}'] = acc_unsup_all
+    res_dict[f'acctrain_{method}'] = acc_train_all
     res_dict[f'cpu_time_{method}'] = cpu_time_all
 
     with open(file_name, 'wb') as f:

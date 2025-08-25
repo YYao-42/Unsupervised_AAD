@@ -288,7 +288,7 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         cpu_end = time.process_time()
         cpu_time = cpu_end - cpu_start
-        return pred_labels_iters, cpu_time
+        return pred_labels_iters, repred_labels, cpu_time
 
     def discriminative(self, model_init=None):
         cpu_start = time.process_time()
@@ -318,7 +318,7 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         cpu_end = time.process_time()
         cpu_time = cpu_end - cpu_start
-        return pred_labels_iters, cpu_time
+        return pred_labels_iters, repred_labels, cpu_time
 
     def unbiased(self, model_init=None, SINGLEENC=True):
         cpu_start = time.process_time()
@@ -349,7 +349,7 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         cpu_end = time.process_time()
         cpu_time = cpu_end - cpu_start
-        return pred_labels_iters, cpu_time
+        return pred_labels_iters, repred_labels, cpu_time
     
     def soft(self, gmm_0, gmm_1, model_init=None):
         cpu_start = time.process_time()
@@ -379,8 +379,9 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         cpu_end = time.process_time()
         cpu_time = cpu_end - cpu_start
-        return pred_labels_iters, cpu_time
-    
+        repred_labels = [1 if probas[1] > probas[0] else 2 for probas in repred_probas]
+        return pred_labels_iters, repred_labels, cpu_time
+
     def soft_bpsk(self, model_init=None, GLOBAL=False):
         cpu_start = time.process_time()
         data_train = np.concatenate(self.data_train_trials, axis=0)
@@ -409,6 +410,7 @@ class ITERATIVE:
                 feats_train = np.concatenate([np.concatenate([att, unatt], axis=1) for att, unatt in zip(att_trials, unatt_trials)], axis=0)
             else:
                 repred_probas = utils_prob.predict_proba_bpsk(corr_pairs, stats)
+                repred_labels = [1 if probas[1] > probas[0] else 2 for probas in repred_probas]
                 segs_pred = [update_seg_soft(view, probas) for view, probas in zip(segs_views_train, repred_probas)]
                 feats_train = np.concatenate([views[1] for views in segs_pred], axis=0)
             model = train_cca_model([data_train, feats_train], latent_dimensions=self.latent_dimensions, RANDMODEL=False, SEED=self.SEED, SINGLEENC=True)
@@ -417,4 +419,4 @@ class ITERATIVE:
         pred_labels_iters = np.stack(pred_labels_iters, axis=0)
         cpu_end = time.process_time()
         cpu_time = cpu_end - cpu_start
-        return pred_labels_iters, cpu_time
+        return pred_labels_iters, repred_labels, cpu_time
