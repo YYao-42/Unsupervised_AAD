@@ -1,21 +1,21 @@
 import subprocess
 from multiprocessing import Pool
 
+dataset = 'fuglsang2018'
+nb_train_trials_options = [6, 12, 18, 24, 30, 36, 42]
+methods = ['single', 'single_warminit', 'two', 'bpsk_local', 'single_unbiased']
+
 script_name = 'speech_iter.py'
-experiments = [
-    {'dataset': 'Neetha', 'nbtraintrials': 40, 'method': 'single', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 40, 'method': 'single_warminit', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 40, 'method': 'two', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 40, 'method': 'bpsk_local', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 40, 'method': 'single_unbiased', 'shuffle': True},
 
-    {'dataset': 'Neetha', 'nbtraintrials': 45, 'method': 'single', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 45, 'method': 'single_warminit', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 45, 'method': 'two', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 45, 'method': 'bpsk_local', 'shuffle': True},
-    {'dataset': 'Neetha', 'nbtraintrials': 45, 'method': 'single_unbiased', 'shuffle': True},
-]
-
+experiments = []
+for nbtraintrials in nb_train_trials_options:
+    for method in methods:
+        experiments.append({
+            'dataset': dataset,
+            'nbtraintrials': nbtraintrials,
+            'method': method,
+            'shuffle': True
+        })
 
 # Function to run a single experiment
 def run_experiment(arg_set):
